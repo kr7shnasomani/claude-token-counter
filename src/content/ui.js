@@ -185,6 +185,13 @@
 			this.weeklyBarFill = null;
 			this.sessionResetMs = null;
 			this.weeklyResetMs = null;
+			this.sessionMarker = null;
+			this.weeklyMarker = null;
+			// Latched the moment a reading proves the nominal window length wrong.
+			// Never cleared: one contradiction is enough to know the figure does
+			// not describe this account, and the marker stays hidden after it.
+			this.sessionWindowLengthUnknown = false;
+			this.weeklyWindowLengthUnknown = false;
 			this.refreshingUsage = false;
 			this.refreshBtn = null;
 
@@ -264,12 +271,13 @@
 				strokeColor: isDark ? CC.COLORS.PROGRESS_OUTLINE_DARK : CC.COLORS.PROGRESS_OUTLINE_LIGHT,
 				fillColor: isDark ? CC.COLORS.PROGRESS_FILL_DARK : CC.COLORS.PROGRESS_FILL_LIGHT,
 				boldColor: isDark ? CC.COLORS.BOLD_DARK : CC.COLORS.BOLD_LIGHT,
+				markerColor: isDark ? CC.COLORS.PROGRESS_MARKER_DARK : CC.COLORS.PROGRESS_MARKER_LIGHT,
 				cacheActiveColor: isDark ? CC.COLORS.CACHE_ACTIVE_DARK : CC.COLORS.CACHE_ACTIVE_LIGHT
 			};
 		}
 
 		refreshProgressChrome() {
-			const { strokeColor, fillColor, boldColor } = this.getProgressChrome();
+			const { strokeColor, fillColor, boldColor, markerColor } = this.getProgressChrome();
 
 			const applyBarChrome = (bar, { fillCaution, fillWarn } = {}) => {
 				if (!bar) return;
@@ -277,6 +285,7 @@
 				bar.style.setProperty('--cc-fill', fillColor);
 				bar.style.setProperty('--cc-fill-caution', fillCaution ?? fillColor);
 				bar.style.setProperty('--cc-fill-warn', fillWarn ?? fillColor);
+				bar.style.setProperty('--cc-marker', markerColor);
 			};
 
 			applyBarChrome(this.sessionBar, { fillCaution: CC.COLORS.AMBER_WARNING, fillWarn: CC.COLORS.RED_WARNING });
@@ -373,7 +382,11 @@
 			this.sessionBar.className = 'cc-bar cc-bar--usage';
 			this.sessionBarFill = document.createElement('div');
 			this.sessionBarFill.className = 'cc-bar__fill';
+			this.sessionMarker = document.createElement('div');
+			this.sessionMarker.className = 'cc-bar__marker cc-hidden';
+			this.sessionMarker.style.left = '0%';
 			this.sessionBar.appendChild(this.sessionBarFill);
+			this.sessionBar.appendChild(this.sessionMarker);
 
 			this.weeklyUsageSpan = document.createElement('span');
 			this.weeklyUsageSpan.className = 'cc-usageText';
@@ -382,7 +395,11 @@
 			this.weeklyBar.className = 'cc-bar cc-bar--usage';
 			this.weeklyBarFill = document.createElement('div');
 			this.weeklyBarFill.className = 'cc-bar__fill';
+			this.weeklyMarker = document.createElement('div');
+			this.weeklyMarker.className = 'cc-bar__marker cc-hidden';
+			this.weeklyMarker.style.left = '0%';
 			this.weeklyBar.appendChild(this.weeklyBarFill);
+			this.weeklyBar.appendChild(this.weeklyMarker);
 
 			this.sessionGroup = document.createElement('div');
 			this.sessionGroup.className = 'cc-usageGroup';
@@ -574,10 +591,18 @@
 			// edge.
 			const input = document.querySelector(CC.DOM.CHAT_INPUT);
 			if (!input) return;
-			const byClass = input.closest(CC.DOM.COMPOSER_CARD);
-			const card = byClass || findComposerCard(input);
+			const matched = input.closest(CC.DOM.COMPOSER_CARD);
+			const card = matched || findComposerCard(input);
 			if (!card) return;
-			CC.uiVariant = byClass ? 'new' : 'old';
+			// Which of the three tiers actually matched. This rides along in bug
+			// reports, and anchoring is the code most likely to break when claude.ai
+			// redesigns, so "it fell through to the shape heuristic" has to be
+			// distinguishable from "the design-system attribute was there". These
+			// were one value, `new`, until `[data-cds]` joined the same selector and
+			// silently merged two different layouts under it.
+			CC.uiVariant = !matched ? 'shape'
+				: matched.hasAttribute('data-cds') ? 'cds'
+					: 'class';
 
 			// The card is a flex column, so appending puts the row on its own full-width
 			// line below the input, inside the card's padding box.
@@ -772,6 +797,55 @@
 				this.weeklyResetMs = null;
 				this.weeklyBarFill.classList.remove('cc-caution', 'cc-warn', 'cc-full');
 			}
+
+			this._updateMarkers();
+		}
+
+		/**
+		 * Place both elapsed-time markers, or withdraw them.
+		 *
+		 * Neither payload states how long a window is, so the window start has to
+		 * be inferred as `resets_at - nominal`. That inference holds only while the
+		 * readings agree with it: a window can never have meaningfully more time
+		 * left than it is long, so a remaining time above the nominal proves the
+		 * nominal figure does not describe this account. The verdict is latched,
+		 * because the contradiction shows up only early in an over-long window -
+		 * later readings look perfectly ordinary while the marker they imply is
+		 * badly misplaced.
+		 *
+		 * The tolerance is what keeps that latch off a hair trigger. `resets_at` is
+		 * the server's clock and `now` is the browser's, so a window that just
+		 * opened reads as a little over nominal on any browser running behind -
+		 * and without a margin, seconds of ordinary clock skew would withdraw the
+		 * marker permanently for the session.
+		 */
+		_updateMarkers() {
+			const now = Date.now();
+
+			const place = (marker, resetMs, windowMs, latchKey) => {
+				if (!marker) return;
+
+				const known = resetMs && Number.isFinite(resetMs) && windowMs > 0;
+				if (known && resetMs - now > windowMs + CC.CONST.WINDOW_NOMINAL_TOLERANCE_MS) {
+					this[latchKey] = true;
+				}
+
+				const remaining = known ? resetMs - now : 0;
+				// A window past its reset is not stale so much as unplaceable: the
+				// next reading carries the new window, and until it lands there is
+				// no start to measure from.
+				if (!known || this[latchKey] || remaining <= 0) {
+					marker.classList.add('cc-hidden');
+					return;
+				}
+
+				const pct = Math.max(0, Math.min(100, ((windowMs - remaining) / windowMs) * 100));
+				marker.style.left = `${pct}%`;
+				marker.classList.remove('cc-hidden');
+			};
+
+			place(this.sessionMarker, this.sessionResetMs, CC.CONST.SESSION_WINDOW_MS, 'sessionWindowLengthUnknown');
+			place(this.weeklyMarker, this.weeklyResetMs, CC.CONST.WEEKLY_WINDOW_MS, 'weeklyWindowLengthUnknown');
 		}
 
 		tick() {
@@ -810,6 +884,10 @@
 					this.weeklyUsageSpan.textContent = `${prefix}${formatResetCountdown(this.weeklyResetMs)})`;
 				}
 			}
+
+			// The markers advance with the clock, not with usage, so they move on
+			// every tick rather than only when a fresh reading arrives.
+			this._updateMarkers();
 		}
 	}
 

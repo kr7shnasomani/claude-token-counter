@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en" data-mode="dark">
+<head>
+<meta charset="utf-8" />
+<title>Composer anchoring fixture</title>
+<!-- The extension's own stylesheet, exactly as the manifest ships it. Injected
+     with a cache-buster for the same reason as the scripts below: a stale copy
+     silently verifies the previous version's CSS. -->
+<script>
+	// Not document.write: security.test.js bans it in shipped code, and a fixture
+	// that models a banned pattern is one someone copies.
+	(() => {
+		const link = document.createElement('link');
+		link.rel = 'stylesheet';
+		link.href = '../../src/styles.css?v=' + Date.now();
+		document.head.appendChild(link);
+	})();
+</script>
+<style>
+	/* A stand-in for claude.ai's own look: enough layout for the shape
+	   heuristic to have something real to measure. */
+	body { background:#262624; color:#c2c0b6; font:14px system-ui; margin:0; padding:40px; display:flex; flex-direction:column; gap:48px; }
+	h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.5; margin:0 0 8px; }
+	.composer { display:flex; flex-direction:column; background:#30302e; border-radius:16px; padding:12px; width:680px; }
+	.input { min-height:56px; padding:8px; color:#c2c0b6; }
+	.toolbar { display:flex; gap:8px; padding-top:8px; opacity:.6; }
+</style>
+</head>
+<body>
+
+<!-- Variant 1: Claude's design-system attribute (the primary anchor). -->
+<section>
+	<h2>new — [data-cds="ChatComposer"]</h2>
+	<div data-cds="ChatComposer" class="composer">
+		<div class="input" data-testid="chat-input" contenteditable>Reply to Claude…</div>
+		<div class="toolbar"><span>+</span><span>Sonnet 4.5</span></div>
+	</div>
+</section>
+
+<!-- Variant 2: the older utility class (second tier). -->
+<section>
+	<h2>old — .rounded-composer</h2>
+	<div class="composer rounded-composer-inner">
+		<div class="input" data-testid="chat-input" contenteditable>Reply to Claude…</div>
+		<div class="toolbar"><span>+</span><span>Sonnet 4.5</span></div>
+	</div>
+</section>
+
+<!-- Variant 3: neither attribute nor class — only shape. -->
+<section>
+	<h2>shape only — no attribute, no class</h2>
+	<div class="composer">
+		<div class="input" data-testid="chat-input" contenteditable>Reply to Claude…</div>
+		<div class="toolbar"><span>+</span><span>Sonnet 4.5</span></div>
+	</div>
+</section>
+
+<script>
+// Loaded with a cache-buster: this fixture is re-run against edited source
+// constantly, and a stale cached ui.js silently verifies the previous version.
+(async () => {
+	for (const src of ['../../src/content/constants.js', '../../src/content/ui.js']) {
+		await new Promise((res, rej) => {
+			const el = document.createElement('script');
+			el.src = src + '?v=' + Date.now();
+			el.onload = res; el.onerror = rej;
+			document.head.appendChild(el);
+		});
+	}
+// Attach one independent counter per composer, so all three anchoring tiers are
+// exercised on the same page. `initialize()`/`attach()` query the document
+// globally, so each section is scoped by temporarily hiding the others from the
+// selectors the UI uses.
+	window.__ccResults = [];
+	document.querySelectorAll('section').forEach((section, i) => {
+	const inputs = [...document.querySelectorAll('[data-testid="chat-input"]')];
+	inputs.forEach((el, j) => { if (j !== i) el.setAttribute('data-testid', 'parked'); });
+
+	const ui = new window.ClaudeCounter.ui.CounterUI();
+	ui.initialize();
+	// main.js normally drives this off a MutationObserver once claude.ai's own
+	// anchors appear; here the fixture is already static, so call it directly.
+	ui.attach();
+	ui.setUsage({
+		five_hour: { utilization: 16, resets_at: new Date(Date.now() + 2.25 * 3600e3).toISOString() },
+		seven_day: { utilization: 57, resets_at: new Date(Date.now() + 3.75 * 864e5).toISOString() }
+	});
+	window.__ccResults.push({ label: section.querySelector('h2').textContent, variant: window.ClaudeCounter.uiVariant, ui });
+
+	inputs.forEach((el, j) => { if (j !== i) el.setAttribute('data-testid', 'chat-input'); });
+	});
+	document.body.dataset.ccReady = '1';
+})();
+</script>
+</body>
+</html>

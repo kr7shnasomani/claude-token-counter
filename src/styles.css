@@ -13,6 +13,18 @@
 
 /* Usage row: session + weekly */
 .cc-usageRow {
+	/* The row is also given Claude's own `flex flex-row items-center gap-3
+	   w-full` utilities, which is what actually laid it out until now. Repeating
+	   the same values here costs nothing while those classes resolve, and keeps
+	   the row on one line if they ever stop: without a layout of its own it
+	   collapses into stacked blocks, bars under labels. Values match the
+	   utilities exactly (gap-3 = 0.75rem). */
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 0.75rem;
+	width: 100%;
+
 	position: relative;
 	box-sizing: border-box;
 	margin-top: 4px;
@@ -62,6 +74,7 @@
 	--cc-fill: transparent;
 	--cc-fill-caution: var(--cc-fill);
 	--cc-fill-warn: var(--cc-fill);
+	--cc-marker: transparent;
 
 	position: relative;
 	box-sizing: border-box;
@@ -95,6 +108,18 @@
 
 .cc-bar__fill.cc-warn {
 	background: var(--cc-fill-warn);
+}
+
+/* Elapsed-time marker: how far through the reset window we are, so the fill
+   can be read against it. Only drawn when the window length is known. */
+.cc-bar__marker {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0%;
+	width: 2px;
+	background: var(--cc-marker);
+	pointer-events: none;
 }
 
 

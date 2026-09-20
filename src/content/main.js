@@ -202,11 +202,33 @@
 
 	const PLAN_LABELS = [
 		['claude_max', 'MAX'],
-		['claude_pro', 'PRO'],
-		['claude_team', 'TEAM'],
-		['raven', 'ENTERPRISE'],
+		['claude_pro', 'PRO']
+	];
+
+	// `raven` is the organisation tier and covers Team and Enterprise alike: a real
+	// Team org reports exactly ["raven", "chat"], so the capability list cannot tell
+	// the two apart. `raven_type` on the org object names which one it is.
+	// `claude_team` used to sit in the list above and never matched anything: it is
+	// the value of a reporting field on the org object, not a capability.
+	const RAVEN_TYPES = [
+		['team', 'TEAM'],
 		['enterprise', 'ENTERPRISE']
 	];
+
+	/** Plan label for an org object, or FREE when nothing identifies it. */
+	function planFromOrg(org) {
+		const caps = Array.isArray(org?.capabilities) ? org.capabilities : [];
+		if (caps.includes('raven')) {
+			const type = typeof org?.raven_type === 'string' ? org.raven_type.toLowerCase() : null;
+			const raven = RAVEN_TYPES.find(([t]) => t === type);
+			// An unrecognised org tier falls back to TEAM rather than dropping to
+			// FREE: Team is much the commoner of the two, so it is the better guess
+			// if Anthropic ever adds a third `raven_type`.
+			return raven ? raven[1] : 'TEAM';
+		}
+		const match = PLAN_LABELS.find(([cap]) => caps.includes(cap));
+		return match ? match[1] : 'FREE';
+	}
 
 	let planLabel = null;
 
@@ -226,9 +248,7 @@
 			const orgs = await CC.bridge.requestOrgs();
 			const list = Array.isArray(orgs) ? orgs : [orgs];
 			const org = list.find((o) => o?.uuid === orgId) || list[0];
-			const caps = Array.isArray(org?.capabilities) ? org.capabilities : [];
-			const match = PLAN_LABELS.find(([cap]) => caps.includes(cap));
-			planLabel = match ? match[1] : 'FREE';
+			planLabel = planFromOrg(org);
 		} catch {
 			planLabel = null;
 		}
@@ -497,6 +517,19 @@
 			refreshUsage();
 		}
 	}
+
+	// Exposed for tests. This file is one IIFE with no other seam, and the suites
+	// previously asserted against its *source text* - which broke on reformatting
+	// and proved nothing about behaviour. `parseUsage*` are the only routes usage
+	// takes into the extension (on free tier the SSE one is the only route there
+	// is), and `seedFromSnapshot` decides what a stored reading is still worth on
+	// load; both are worth exercising directly.
+	CC.usage = {
+		parseUsageFromUsageEndpoint,
+		parseUsageFromMessageLimit,
+		seedFromSnapshot,
+		readState: () => ({ usage: usageState, seeded: usageIsSeeded, updatedAt: lastUsageUpdateMs })
+	};
 
 	// Keep the countdowns ticking.
 	setInterval(tick, 1000);

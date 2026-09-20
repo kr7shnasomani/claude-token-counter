@@ -1,6 +1,6 @@
 {
   "name": "claude-token-counter",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": true,
   "description": "Tests for the Claude Token Counter browser extension. The extension itself has no build step and no runtime dependencies.",
   "scripts": {
@@ -8,7 +8,8 @@
     "lint": "eslint ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@microsoft/eslint-formatter-sarif": "^3.1.0",
-    "eslint": "^9.15.0"
+    "eslint": "^10.11.0"
   }
 }

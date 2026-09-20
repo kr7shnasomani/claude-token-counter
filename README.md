@@ -15,13 +15,13 @@
   </a>
 </p>
 
-![Claude Token Counter Dark Mode](./darkmodess.jpg)
+![Claude Token Counter Dark Mode](img/darkmodess.jpg)
 
 ## Features
 
 - **Token count**: approximate token count for the current conversation
 - **Cache timer**: countdown showing how long the conversation remains cached (cheaper to continue). It appears only while the context is actually cached and disappears when the window closes
-- **Usage bars**: session (5 hour) and weekly (7 day) usage from Claude's native API, with reset countdowns and more precision than the rounded `/usage` page. Bars turn amber past 75% and red past 90%
+- **Usage bars**: session (5 hour) and weekly (7 day) usage from Claude's native API, with reset countdowns and more precision than the rounded `/usage` page. Bars turn amber past 75% and red past 90%. A thin line marks how far through the window you are, so you can see whether you are burning quota faster than the clock
 - **Chat export**: download the current conversation as Markdown or plain text, including any files Claude generated
 - **Toolbar popup**: click the extension icon from any tab for your plan's session and weekly limits, with settings for what appears on the page and a one-click bug report
 
@@ -58,9 +58,9 @@ Because the bridge runs in the page's own world, it can't call extension APIs li
 Runs in the isolated content script world, declared in `manifest.json` against `https://claude.ai/*`. It's responsible for everything user-facing:
 
 - `bridge-client.js` injects `bridge.js` (via `chrome.runtime.getURL` / `browser.runtime.getURL`, whichever exists) as a `<script src="...">` tag so it runs in the main world, then listens for its `postMessage` events.
-- `main.js` orchestrates state: it tracks the current conversation ID (parsed from the URL path), the current org ID (read from the `lastActiveOrg` cookie), and reacts to the bridge's events by kicking off token recomputation or usage refreshes. A `MutationObserver`-based `waitForElement` helper waits for claude.ai's own DOM anchors (like the model selector dropdown) to appear before attaching UI, since the SPA re-renders on every navigation.
+- `main.js` orchestrates state: it tracks the current conversation ID (parsed from the URL path), the current org ID (read from the `lastActiveOrg` cookie), and reacts to the bridge's events by kicking off token recomputation or usage refreshes. A `MutationObserver`-based `waitForElement` helper waits for claude.ai's own DOM anchors — the chat input (`[data-testid="chat-input"]`) and the chat title (`[data-testid="chat-title-split"]`) — to appear before attaching UI, since the SPA re-renders on every navigation.
 - `tokens.js` turns a raw conversation payload into a token count. claude.ai stores every edit and every branch of a conversation in one flat `chat_messages` array; the extension walks backward from `current_leaf_message_uuid` via each message's `parent_message_uuid` to reconstruct just the active branch (the "trunk"). It strips out non-text content (thinking blocks, images, documents), serializes `tool_use`/`tool_result` blocks deterministically, and feeds the resulting text through a vendored `o200k_base` tokenizer (`src/vendor/o200k_base.js`), the same token encoding Claude uses internally, for an approximate but consistent count. A per-message cache (keyed by message UUID plus a length+hash fingerprint, hashed via the bridge's `crypto.subtle.digest` call) avoids re-tokenizing messages that haven't changed.
-- `ui.js` renders and updates the actual widgets: the token count in the chat header, the cache countdown (based on the last assistant message's timestamp plus a 5 minute cache window), the session/weekly usage bars, and the export button. The usage row is anchored to the composer card (`.rounded-composer`) so it sits inside the input box on both the home and conversation layouts.
+- `ui.js` renders and updates the actual widgets: the token count in the chat header, the cache countdown (based on the last assistant message's timestamp plus a 5 minute cache window), the session/weekly usage bars, and the export button. The usage row is anchored to the composer card (see below) so it sits inside the input box on both the home and conversation layouts.
 - `export.js` turns a conversation payload into a Markdown or plain text document. It reuses the same trunk reconstruction as `tokens.js`, so an export contains the conversation as it currently reads, not the edited-away branches. Files Claude generated (`create_file`, and the older `artifacts` tool) are embedded in full, with every later `str_replace` edit replayed onto them so the exported file matches the version that was actually used. Tool calls collapse into a one-line summary rather than pages of JSON, and thinking blocks are excluded. The download uses a blob URL and an `<a download>` click, so no `downloads` permission is needed.
 
 - `src/popup/*` is the toolbar popup and the settings panel. It is a separate document and cannot read the content script's memory, so the content script mirrors each usage reading into `chrome.storage.local` and the popup renders that snapshot, timestamped. Pressing refresh asks for optional access to claude.ai and then reads `/api/organizations` and the usage endpoint directly, so the popup works on a fresh install without ever opening claude.ai in a tab.
@@ -77,6 +77,8 @@ A one-second interval (`tick()` in `main.js`) keeps the countdowns moving, trigg
 Not every plan reports both sources. On the free plan the REST endpoint returns `null` for every window, so the SSE event that accompanies a reply is the only source and usage is unknown until the first message of a session. The row says so rather than sitting blank, and once a reading arrives it is stored and shown again on later loads. A stored window whose reset has passed is dropped, since no active window exists until the next message; one that has not is still correct, because usage only advances when a message is sent, so it is a floor rather than a stale figure. A window with no current reading keeps its place marked with a dash instead of disappearing, so the row never collapses to a single bar.
 
 Because the free plan's figures only ever arrive with a reply, they cannot reflect usage from another device until the next message is sent in that browser. Refresh in the popup cannot help there either, and says so instead of restamping an old reading as current. Paid plans read from the endpoint on every load, so they are always accurate across devices.
+
+Each bar carries a thin line showing how far through its reset window the clock has travelled, which is what makes the fill readable: 40% used two hours into a five-hour window means something different from 40% used with ten minutes to go. Neither source states how long a window actually is, so its start is inferred by subtracting the nominal length from the reset time. That inference is checked rather than trusted — a window can never have meaningfully more time left than it is long, so a reading well above the nominal proves the figure wrong for that account and the line is withdrawn instead of pointing somewhere misleading. The margin matters: the reset time comes from Claude's clock and the comparison is against your browser's, so a window that has just opened reads as slightly over-long on any machine running a little behind. The bar, the percentage, and the countdown are unaffected.
 
 The composer is located by `[data-cds="ChatComposer"]`, Claude's own design-system attribute, falling back to a `rounded-composer` class and then to shape: the nearest ancestor of the text input that is a flex column with a corner radius and a painted background. Claude ships more than one composer design and the class names differ between them.
 
@@ -116,11 +118,20 @@ There is no build step. Load the repository root as an unpacked extension and re
 
 ```bash
 npm ci --ignore-scripts   # ESLint only; the extension ships no runtime dependencies
-npm test                  # six suites
+npm test                  # nine suites
 npm run lint
 ```
 
-The suites run the real content scripts in Node against a small DOM shim, so they exercise shipped code rather than a copy: the token and cache header, the exporter, the popup, the settings switches, packaging, and a set of security guards that fail on `eval`, `innerHTML`, widened permissions, an unpinned GitHub Action, or a dependency that could execute code at install time.
+The suites run the real content scripts in Node against a small DOM shim, so they exercise shipped code rather than a copy: the token and cache header, the exporter, the popup, the settings switches, the usage bars' elapsed-time markers, the two usage payload shapes, packaging, and a set of security guards that fail on `eval`, `innerHTML`, widened permissions, an unpinned GitHub Action, or a dependency that could execute code at install time.
+
+One of them guards against features disappearing rather than misbehaving, which is a failure the others cannot see. `inventory.test.js` asserts what the UI is *made of* — every element exists, is attached, and has a style rule — and compares the rendered tree against a committed snapshot at `test/snapshots/ui-structure.txt`. Removing something is still allowed; it just has to be a visible edit to a list or a snapshot rather than a silent omission. Regenerate the snapshot deliberately with `UPDATE_SNAPSHOT=1 npm test`, and read the diff before committing it.
+
+Anchoring and visual layout are the one thing the suites cannot reach — the DOM
+shim has no layout, so it can prove an element exists but never that it is
+painted. `test/fixtures/composer.html` covers that by hand: serve the repo
+(`python3 -m http.server 8777`) and open it to see a real `CounterUI` attach to
+all three composer variants. It is not part of `npm test`; there is no browser
+in CI.
 
 The version appears in `manifest.json` and `package.json`. CI and the release workflow both refuse to proceed if they disagree.
 

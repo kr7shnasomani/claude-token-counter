@@ -28,8 +28,8 @@ The export feature converts conversation data into a Markdown file that is saved
 
 The extension uses `chrome.storage.local` (browser-local storage) for three purposes:
 
-- **Usage snapshot** — The latest token count, cache timer, and usage-bar values are saved so the toolbar popup can display them without requiring the Claude.ai tab to be in the foreground.
-- **User settings** — A single settings object (e.g., enabling or disabling the overlay) is persisted so preferences survive page reloads and browser restarts.
+- **Usage snapshot** — The latest usage-bar reading (the two windows' percentages and reset times), your organisation id, plan name, and which Claude layout was detected, saved so the toolbar popup can display them without requiring a Claude.ai tab to be open. No token count, cache timer, or conversation content is stored.
+- **User settings** — A single settings object recording which on-page elements you have switched off, persisted so preferences survive page reloads and browser restarts.
 - **Bug-report draft** — The feedback form in the popup auto-saves draft text so it is not lost if the popup is closed accidentally.
 
 All stored data remains on your device. The extension does **not** use:

@@ -1,4 +1,4 @@
-// Flat config (ESLint 9). Deliberately narrow: this catches genuine mistakes and
+// Flat config (ESLint 10). Deliberately narrow: this catches genuine mistakes and
 // unsafe constructs, not style. Formatting is not enforced, so the linter never
 // argues with a diff that is otherwise fine.
 const js = require('@eslint/js');

@@ -38,7 +38,11 @@ t('note is shown to the user', html.includes('id="feedbackNote"') && js.includes
 for (const fact of ['Extension:', 'Browser:', 'Plan:', 'Claude UI:']) {
 	t('reports ' + fact, js.includes(fact));
 }
-t('UI variant is captured on the page', read('src/content/ui.js').includes("CC.uiVariant = byClass ? 'new' : 'old'"));
+// Reported in every bug report, so the three anchoring tiers must stay
+// distinguishable - anchoring is the least-tested, most breakage-prone code here
+// and "which tier matched" is the first thing worth knowing.
+const uiSrc = read('src/content/ui.js');
+t('UI variant names the tier that matched', ["'shape'", "'cds'", "'class'"].every((v) => uiSrc.includes(v)));
 t('and carried in the snapshot', read('src/content/main.js').includes('uiVariant: CC.uiVariant'));
 
 section('refresh does not fake freshness');
@@ -60,6 +64,20 @@ const fromPopup = labelsIn(js);
 t('both copies exist', Array.isArray(fromMain) && Array.isArray(fromPopup));
 t('and are identical', JSON.stringify(fromMain) === JSON.stringify(fromPopup), String(fromMain) + ' vs ' + String(fromPopup));
 t('unrecognised capabilities fall back to FREE', js.includes("match ? match[1] : 'FREE'"));
+
+// A real Team org reports exactly ["raven", "chat"], so the capability list cannot
+// separate Team from Enterprise - `raven_type` on the org object does. `claude_team`
+// sat in PLAN_LABELS for three releases and never matched anything.
+const ravenIn = (src) => {
+	const body = /RAVEN_TYPES = \[(.*?)\];/s.exec(src);
+	return body ? [...body[1].matchAll(/\['(\w+)', '(\w+)'\]/g)].map((m) => m[1] + '=' + m[2]) : null;
+};
+const ravenMain = ravenIn(read('src/content/main.js'));
+const ravenPopup = ravenIn(js);
+t('the org tier is read from raven_type', Array.isArray(ravenPopup) && ravenPopup.includes('team=TEAM'));
+t('and both copies agree', JSON.stringify(ravenMain) === JSON.stringify(ravenPopup), String(ravenMain) + ' vs ' + String(ravenPopup));
+t('no copy still claims a claude_team capability', !read('src/content/main.js').includes("['claude_team'") && !js.includes("['claude_team'"));
+t('an org tier with no name is not reported as FREE', js.includes("raven ? raven[1] : 'TEAM'"));
 
 section('the heading survives every plan name');
 // ENTERPRISE wrapped onto a second line and pushed the bars down. The heading was

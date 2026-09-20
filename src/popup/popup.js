@@ -176,14 +176,30 @@
 
 	const PLAN_LABELS = [
 		['claude_max', 'MAX'],
-		['claude_pro', 'PRO'],
-		['claude_team', 'TEAM'],
-		['raven', 'ENTERPRISE'],
+		['claude_pro', 'PRO']
+	];
+
+	// `raven` is the organisation tier and covers Team and Enterprise alike: a real
+	// Team org reports exactly ["raven", "chat"], so the capability list cannot tell
+	// the two apart. `raven_type` on the org object names which one it is.
+	// `claude_team` used to sit in the list above and never matched anything: it is
+	// the value of a reporting field on the org object, not a capability.
+	const RAVEN_TYPES = [
+		['team', 'TEAM'],
 		['enterprise', 'ENTERPRISE']
 	];
 
-	function planFromCapabilities(capabilities) {
-		const caps = Array.isArray(capabilities) ? capabilities : [];
+	/** Plan label for an org object, or FREE when nothing identifies it. */
+	function planFromOrg(org) {
+		const caps = Array.isArray(org?.capabilities) ? org.capabilities : [];
+		if (caps.includes('raven')) {
+			const type = typeof org?.raven_type === 'string' ? org.raven_type.toLowerCase() : null;
+			const raven = RAVEN_TYPES.find(([t]) => t === type);
+			// An unrecognised org tier falls back to TEAM rather than dropping to
+			// FREE: Team is much the commoner of the two, so it is the better guess
+			// if Anthropic ever adds a third `raven_type`.
+			return raven ? raven[1] : 'TEAM';
+		}
 		const match = PLAN_LABELS.find(([cap]) => caps.includes(cap));
 		return match ? match[1] : 'FREE';
 	}
@@ -215,7 +231,7 @@
 				const list = Array.isArray(payload) ? payload : [payload];
 				const org = list.find((o) => o?.uuid === orgId) || list[0];
 				orgId = org?.uuid || orgId;
-				plan = planFromCapabilities(org?.capabilities);
+				plan = planFromOrg(org);
 			}
 			if (!orgId) {
 				stamp.textContent = 'No account found';

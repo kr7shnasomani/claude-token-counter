@@ -1,5 +1,23 @@
 // Every popup toggle must actually remove its element from the page.
-const { load, section, t, report } = require('./harness');
+const { load, loadWith, fakeStorage, section, t, report } = require('./harness');
+
+const future = new Date(Date.now() + 3e6).toISOString();
+const past = new Date(Date.now() - 3e6).toISOString();
+
+/**
+ * Boot a whole content script against a storage holding `snapshot`, and report
+ * what the seed made of it. `seedFromSnapshot()` runs as main.js evaluates, so
+ * the storage has to exist before the file does.
+ */
+async function seedWith(snapshot) {
+	const chrome = fakeStorage(snapshot ? { 'cc:usageSnapshot': snapshot } : {});
+	const c = loadWith({ chrome },
+		'src/content/constants.js', 'src/content/tokens.js', 'src/content/ui.js',
+		'src/content/bridge-client.js', 'src/content/main.js');
+	// The seed fires during evaluation; await the same call to join it.
+	await c.ClaudeCounter.usage.seedFromSnapshot();
+	return c.ClaudeCounter.usage.readState();
+}
 
 const ctx = load('src/content/constants.js', 'src/content/ui.js');
 const ui = new ctx.ClaudeCounter.ui.CounterUI();
@@ -121,19 +139,44 @@ t('  and shows both bars', !hidden(blank.sessionGroup) && !hidden(blank.weeklyGr
 blank.markUsageUnavailable();
 t('a later empty response cannot undo it', hidden(blank.usageHint) && !hidden(blank.sessionGroup));
 
-section('a stored reading keeps what is still true');
-// The five-hour window rolls over every five hours; the seven-day one does not.
-// Seeding "whichever window is still valid" therefore produced a weekly bar on its
-// own on most page loads, which looks broken. The guard now requires both.
-const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/content/main.js'), 'utf8');
-t('seed keeps whichever window is still valid', main.includes('if (!five_hour && !seven_day) return;'));
-t('seed drops windows whose reset has passed', main.includes('current(snapshot.five_hour) ? snapshot.five_hour : null'));
-t('a seed is always replaced by a live fetch', main.includes('if (!usageState || usageIsSeeded) await refreshUsage();'));
-t('a seed does not stamp the freshness clock', main.includes('if (!seeded) lastUsageUpdateMs = now;'));
-
 section('settings never invent a figure');
 ui.setUsage({ five_hour: { utilization: 10, resets_at: new Date(Date.now() + 3e6).toISOString() }, seven_day: null });
 ui.applySettings({ weeklyBar: true });
 t('weekly shows a dash rather than a stale figure', ui.weeklyUsageSpan.textContent === 'Weekly: \u2014');
 
-process.exit(report('settings'));
+// Async because seedFromSnapshot() is. Everything above is synchronous and has
+// already reported by the time this runs.
+(async () => {
+	section('a stored reading keeps what is still true');
+	// These ran against main.js *source text* until the harness could load the
+	// file; they are the real behaviour now. A window whose reset has passed is
+	// not stale data waiting to be refreshed - there is no active window at all
+	// until the next message - so it is dropped. One that has not reset is still
+	// correct, because usage only rises when a message is sent: a floor, not a
+	// stale figure.
+	const live = await seedWith({
+		five_hour: { utilization: 12, resets_at: future },
+		seven_day: { utilization: 34, resets_at: future }
+	});
+	t('a live window is seeded onto the row', live.usage?.five_hour?.utilization === 12);
+	t('  and marked as a seed, not a reading', live.seeded === true);
+	t('  without stamping the freshness clock', live.updatedAt === 0);
+
+	const half = await seedWith({
+		five_hour: { utilization: 12, resets_at: past },
+		seven_day: { utilization: 34, resets_at: future }
+	});
+	t('a window whose reset has passed is dropped', half.usage?.five_hour === null);
+	t('  while its live partner survives', half.usage?.seven_day?.utilization === 34);
+
+	const dead = await seedWith({
+		five_hour: { utilization: 12, resets_at: past },
+		seven_day: { utilization: 34, resets_at: past }
+	});
+	t('nothing is seeded when no window is still live', dead.usage === null);
+	t('nothing is seeded from an empty store', (await seedWith(null)).usage === null);
+	t('a window with no reset time is not trusted',
+		(await seedWith({ five_hour: { utilization: 12 }, seven_day: null })).usage === null);
+
+	process.exit(report('settings'));
+})();

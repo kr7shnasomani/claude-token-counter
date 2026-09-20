@@ -29,7 +29,20 @@
 
 	CC.CONST = Object.freeze({
 		CACHE_WINDOW_MS: 5 * 60 * 1000,
-		PENDING_CACHE_TIMEOUT_MS: 60 * 1000
+		PENDING_CACHE_TIMEOUT_MS: 60 * 1000,
+		// Nominal window lengths, taken from the names the server itself gives the
+		// windows (`five_hour`/`seven_day` over REST, `5h`/`7d` over SSE). Nothing
+		// in either payload states a duration, so these are the only figures
+		// available - and they are only ever used to place the elapsed-time
+		// marker, which hides itself as soon as a reading contradicts them.
+		SESSION_WINDOW_MS: 5 * 60 * 60 * 1000,
+		WEEKLY_WINDOW_MS: 7 * 24 * 60 * 60 * 1000,
+		// `resets_at` is the server's clock; `Date.now()` is the browser's. A
+		// window that has just opened therefore reads as slightly longer than
+		// nominal on any browser running behind, which would otherwise look like
+		// proof that the nominal is wrong. A genuinely wrong nominal is wrong by
+		// hours; skew is seconds to minutes, so this separates them.
+		WINDOW_NOMINAL_TOLERANCE_MS: 5 * 60 * 1000
 	});
 
 	CC.COLORS = Object.freeze({
@@ -42,6 +55,8 @@
 		BOLD_LIGHT: '#141413',
 		BOLD_DARK: '#faf9f5',
 		CACHE_ACTIVE_DARK: '#3fb950',
-		CACHE_ACTIVE_LIGHT: '#1a7f37'
+		CACHE_ACTIVE_LIGHT: '#1a7f37',
+		PROGRESS_MARKER_DARK: '#ffffff',
+		PROGRESS_MARKER_LIGHT: '#111111'
 	});
 })();
