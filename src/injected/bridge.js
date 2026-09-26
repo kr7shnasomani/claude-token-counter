@@ -39,16 +39,28 @@
 			}
 		}
 
-		// Detect generation start (completion requests)
-		if (url && opts.method === 'POST' && (url.includes('/completion') || url.includes('/retry_completion'))) {
-			post('cc:generation_start', {});
-		}
+		// Detect generation start (completion requests). The method may live on a
+		// Request object rather than in the init, depending on how it was called.
+		const method = String(opts.method || (args[0] instanceof Request ? args[0].method : 'GET')).toUpperCase();
+		const completion = url && method === 'POST' && (url.includes('/completion') || url.includes('/retry_completion'))
+			? (getConversationMeta(url) || {})
+			: null;
+		if (completion) post('cc:generation_start', {});
 
-		const response = await originalFetch.apply(window, args);
+		let response;
+		try {
+			response = await originalFetch.apply(window, args);
+		} catch (e) {
+			if (completion) post('cc:generation_end', completion);
+			throw e;
+		}
 
 		const contentType = response.headers.get('content-type') || '';
 		if (contentType.includes('event-stream')) {
-			handleEventStream(response);
+			handleEventStream(response, completion);
+		} else if (completion) {
+			// A refused completion (rate limit, error) answers with JSON, not a stream.
+			post('cc:generation_end', completion);
 		}
 
 		// Catch conversation tree fetches
@@ -118,7 +130,14 @@
 		}
 	}
 
-	async function handleEventStream(response) {
+	/**
+	 * Reads a clone of an SSE response. For a completion stream, its end is the
+	 * only signal that a reply has landed: claude.ai renders the reply from the
+	 * stream and does not refetch the conversation tree afterwards, so the token
+	 * count and cache timer would otherwise stay at whatever the page loaded with.
+	 * That is why this reads to the end rather than stopping at `message_limit`.
+	 */
+	async function handleEventStream(response, completion) {
 		try {
 			const cloned = response.clone();
 			const reader = cloned.body?.getReader?.();
@@ -141,9 +160,6 @@
 						const json = JSON.parse(raw);
 						if (json?.type === 'message_limit' && json.message_limit) {
 							post('cc:message_limit', json.message_limit);
-							reader.cancel().catch(() => {});
-							reader.releaseLock();
-							return;
 						}
 					} catch {
 						// ignore
@@ -151,7 +167,10 @@
 				}
 			}
 		} catch {
-			// best-effort; don't break claude.ai
+			// best-effort; don't break claude.ai. A stopped generation lands here
+			// too, and still leaves a partial reply worth counting.
+		} finally {
+			if (completion) post('cc:generation_end', completion);
 		}
 	}
 

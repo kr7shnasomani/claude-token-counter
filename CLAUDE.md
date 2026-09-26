@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm test                        # all 9 suites via test/run.js
+npm test                        # all 10 suites via test/run.js
 node test/security.test.js      # one suite (each file runs standalone)
 npm run lint                    # eslint .
 ```
@@ -47,6 +47,15 @@ three-tier fallback (`chat-title-split` → `chat-header` → semantic `<header>
 Do not replace either with a single selector; that is exactly what broke before.
 Neither is covered by a test — they need a real page — so they are the most
 fragile code here.
+
+**claude.ai does not refetch the conversation after a reply.** It renders the
+reply from the completion stream, so the token count and cache timer - both
+computed from the tree - only move if the extension asks. The bridge posts
+`cc:generation_end` when a completion stream closes (or is refused, fails, or is
+stopped) and `main.js` refetches then, retrying once if the tree does not yet
+end in the reply. This is why `handleEventStream` reads to the end instead of
+stopping at `message_limit`. Before this, both froze after the first message
+until a reload; `test/live-refresh.test.js` runs the real bridge to pin it.
 
 **Not every plan reports usage the same way.** On free tier the REST endpoint
 returns `null` for every window - before *and* after a message - and the SSE

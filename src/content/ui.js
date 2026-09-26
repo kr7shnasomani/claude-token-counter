@@ -662,11 +662,14 @@
 			}
 
 			// A stopped or failed generation never produces a refreshed conversation,
-			// so without this the placeholder would sit there indefinitely.
+			// so without this the placeholder would sit there indefinitely. The pending
+			// state is dropped even while a countdown runs: left set, it would turn
+			// that countdown into a permanent "-:--" when it reaches zero.
 			this.pendingCacheTimeoutId = setTimeout(() => {
 				this.pendingCacheTimeoutId = null;
-				if (!this.pendingCache || this.lastCachedUntilMs) return;
+				if (!this.pendingCache) return;
 				this.pendingCache = false;
+				if (this.lastCachedUntilMs) return;
 				this._clearCache();
 				this._renderHeader();
 			}, CC.CONST.PENDING_CACHE_TIMEOUT_MS);

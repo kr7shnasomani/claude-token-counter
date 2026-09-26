@@ -1,5 +1,5 @@
 // The cache timer is only present while the context is actually cached.
-const { load, section, t, report } = require('./harness');
+const { load, loadWith, section, t, report } = require('./harness');
 
 const ctx = load('src/content/constants.js', 'src/content/ui.js');
 const ui = new ctx.ClaudeCounter.ui.CounterUI();
@@ -49,5 +49,31 @@ ui.pendingCache = false;
 ui._clearCache();
 ui._renderHeader();
 is('timing out falls back to hidden', TOKENS(21));
+
+section('safety net, with a countdown already running when the message is sent');
+// The common case: send while cached. The countdown keeps running on purpose,
+// and if no refreshed conversation ever arrives the safety net must still let
+// go of the pending state - otherwise the timer turns into a permanent "-:--"
+// when the countdown reaches zero instead of disappearing.
+{
+	const timers = [];
+	const c2 = loadWith({ setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {} },
+		'src/content/constants.js', 'src/content/ui.js');
+	const u = new c2.ClaudeCounter.ui.CounterUI();
+	u.initialize();
+	const h = () => u.headerContainer.textContent;
+
+	u.setConversationMetrics({ totalTokens: 5, cachedUntil: Date.now() + 180000 });
+	u.setPendingCache(true);
+	t('the running countdown is left alone', h() === TOKENS(5) + CACHE('3:00'), JSON.stringify(h()));
+
+	timers.at(-1)();
+	t('the safety net still drops the pending state', u.pendingCache === false);
+	t('  without disturbing the countdown', h() === TOKENS(5) + CACHE('3:00'), JSON.stringify(h()));
+
+	u.lastCachedUntilMs = Date.now() - 1;
+	u.tick();
+	t('so at zero the timer disappears rather than sticking at -:--', h() === TOKENS(5), JSON.stringify(h()));
+}
 
 process.exit(report('cache timer'));

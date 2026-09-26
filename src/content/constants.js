@@ -30,6 +30,9 @@
 	CC.CONST = Object.freeze({
 		CACHE_WINDOW_MS: 5 * 60 * 1000,
 		PENDING_CACHE_TIMEOUT_MS: 60 * 1000,
+		// How long to wait before re-reading a conversation whose tree did not yet
+		// include the reply when its stream closed.
+		REPLY_SETTLE_RETRY_MS: 1500,
 		// Nominal window lengths, taken from the names the server itself gives the
 		// windows (`five_hour`/`seven_day` over REST, `5h`/`7d` over SSE). Nothing
 		// in either payload states a duration, so these are the only figures

@@ -1,6 +1,6 @@
 {
   "name": "claude-token-counter",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "private": true,
   "description": "Tests for the Claude Token Counter browser extension. The extension itself has no build step and no runtime dependencies.",
   "scripts": {

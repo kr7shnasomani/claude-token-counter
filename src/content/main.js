@@ -335,13 +335,13 @@
 		}
 
 		const orgId = currentOrgId || getOrgIdFromCookie();
-		if (!orgId) return;
+		if (!orgId) return null;
 		updateOrgIdIfNeeded(orgId);
 
 		try {
-			await CC.bridge.requestConversation(orgId, currentConversationId);
+			return await CC.bridge.requestConversation(orgId, currentConversationId);
 		} catch {
-			// ignore
+			return null;
 		}
 	}
 
@@ -362,6 +362,24 @@
 	function handleGenerationStart() {
 		if (!currentConversationId) return;
 		ui.setPendingCache(true);
+	}
+
+	/**
+	 * A reply has finished, been stopped, or failed. claude.ai does not refetch the
+	 * conversation tree after a reply, so this is the only thing that moves the
+	 * token count and restarts the cache timer between page loads.
+	 */
+	async function handleGenerationEnd({ conversationId } = {}) {
+		if (!currentConversationId) return;
+		if (conversationId && conversationId !== currentConversationId) return;
+
+		const data = await refreshConversation();
+		// The stream can close a moment before the reply is readable from the tree.
+		// One late retry covers that; anything slower is not worth polling for.
+		const trunk = data ? CC.tokens.buildTrunk(data) : [];
+		if (trunk[trunk.length - 1]?.sender !== 'assistant') {
+			setTimeout(refreshConversation, CC.CONST.REPLY_SETTLE_RETRY_MS);
+		}
 	}
 
 	async function handleConversationPayload({ orgId, conversationId, data }) {
@@ -387,6 +405,7 @@
 		if (currentOrgId && !usageState) refreshUsage();
 	});
 	CC.bridge.on('cc:generation_start', handleGenerationStart);
+	CC.bridge.on('cc:generation_end', handleGenerationEnd);
 	CC.bridge.on('cc:conversation', handleConversationPayload);
 	CC.bridge.on('cc:message_limit', handleMessageLimit);
 
