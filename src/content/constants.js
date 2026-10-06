@@ -7,6 +7,13 @@
 		CHAT_MENU_TRIGGER: '[data-testid="chat-title-split"]',
 		CHAT_HEADER: '[data-testid="chat-header"]',
 		HEADER_FALLBACK: 'header',
+		// Claude's top-right action group (page icon, Share). The export button
+		// docks here and borrows the look of an icon button already in it.
+		ACTIONS_HOST: '[data-testid="wiggle-controls-actions"]',
+		ACTIONS_ICON_BUTTON: 'button[data-cds="Button"][data-cds-icon-only]',
+		// Set by the page itself on a reply that is still being written. Present on
+		// layouts that send over their own RPC rather than a /completion stream.
+		STREAMING: '[data-is-streaming="true"]',
 		CHAT_INPUT: '[data-testid="chat-input"]',
 		// Claude names the composer in its own design-system attribute, which is a
 		// far better anchor than either a utility class or a shape heuristic. The
@@ -16,6 +23,85 @@
 	});
 
 	CC.SETTINGS_KEY = 'cc:settings';
+	CC.DIAG_KEY = 'cc:diag';
+	CC.SNAPSHOT_KEY = 'cc:usageSnapshot';
+
+	// This file is also loaded by the popup, so what both sides need lives here once.
+
+	CC.getStorage = () => {
+		try {
+			return globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
+		} catch {
+			return null;
+		}
+	};
+
+	// MV3 storage returns promises on every browser this ships to (Firefox >= 128).
+	CC.storageGet = async (key) => {
+		try {
+			return (await CC.getStorage()?.get(key)) || null;
+		} catch {
+			return null;
+		}
+	};
+
+	const PLAN_LABELS = [
+		['claude_max', 'MAX'],
+		['claude_pro', 'PRO']
+	];
+
+	// `raven` is the organisation tier and covers Team and Enterprise alike: a real
+	// Team org reports exactly ["raven", "chat"], so the capability list cannot tell
+	// the two apart. `raven_type` on the org object names which one it is.
+	// `claude_team` used to sit in the list above and never matched anything: it is
+	// the value of a reporting field on the org object, not a capability.
+	const RAVEN_TYPES = [
+		['team', 'TEAM'],
+		['enterprise', 'ENTERPRISE']
+	];
+
+	/** Plan label for an org object, or FREE when nothing identifies it. */
+	CC.planFromOrg = (org) => {
+		const caps = Array.isArray(org?.capabilities) ? org.capabilities : [];
+		if (caps.includes('raven')) {
+			const type = typeof org?.raven_type === 'string' ? org.raven_type.toLowerCase() : null;
+			const raven = RAVEN_TYPES.find(([t]) => t === type);
+			// An unrecognised org tier falls back to TEAM rather than dropping to
+			// FREE: Team is much the commoner of the two, so it is the better guess
+			// if Anthropic ever adds a third `raven_type`.
+			return raven ? raven[1] : 'TEAM';
+		}
+		const match = PLAN_LABELS.find(([cap]) => caps.includes(cap));
+		return match ? match[1] : 'FREE';
+	};
+
+	/**
+	 * One usage window as `{ utilization: 0-100, resets_at: ISO | null }`, or null.
+	 * The REST endpoint sends a percentage and an ISO string; the message_limit
+	 * event (`fromEvent`) sends a 0-1 fraction and epoch seconds.
+	 */
+	CC.usageWindow = (w, fromEvent = false) => {
+		if (!w || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) return null;
+		const utilization = Math.max(0, Math.min(100, fromEvent ? w.utilization * 100 : w.utilization));
+		const r = w.resets_at;
+		const resets_at = fromEvent
+			? (typeof r === 'number' && Number.isFinite(r) ? new Date(r * 1000).toISOString() : null)
+			: (typeof r === 'string' ? r : null);
+		return { utilization, resets_at };
+	};
+
+	// The last few errors the extension swallowed, for bug reports. Plain strings,
+	// never page content.
+	const recentErrors = [];
+	CC.noteError = (where, err) => {
+		// Some engines quote a slice of the offending text in a parse error; drop it.
+		const message = String(err?.message || err).replace(/(["'`]).*?\1/g, '$1…$1').slice(0, 80);
+		const text = `${where}: ${message}`;
+		if (recentErrors[recentErrors.length - 1] === text) return;
+		recentErrors.push(text);
+		if (recentErrors.length > 5) recentErrors.shift();
+	};
+	CC.recentErrors = () => recentErrors.slice();
 
 	// Every on-page element the popup can switch off. All on by default.
 	CC.SETTINGS_DEFAULTS = Object.freeze({
@@ -30,6 +116,9 @@
 	CC.CONST = Object.freeze({
 		CACHE_WINDOW_MS: 5 * 60 * 1000,
 		PENDING_CACHE_TIMEOUT_MS: 60 * 1000,
+		// How long the export button waits for Claude's action group before settling
+		// for a place beside the token counter.
+		EXPORT_DOCK_GRACE_MS: 4000,
 		// How long to wait before re-reading a conversation whose tree did not yet
 		// include the reply when its stream closed.
 		REPLY_SETTLE_RETRY_MS: 1500,
@@ -46,20 +135,5 @@
 		// proof that the nominal is wrong. A genuinely wrong nominal is wrong by
 		// hours; skew is seconds to minutes, so this separates them.
 		WINDOW_NOMINAL_TOLERANCE_MS: 5 * 60 * 1000
-	});
-
-	CC.COLORS = Object.freeze({
-		PROGRESS_FILL_DARK: '#2c84db',
-		PROGRESS_FILL_LIGHT: '#5aa6ff',
-		PROGRESS_OUTLINE_DARK: '#787877',
-		PROGRESS_OUTLINE_LIGHT: '#bfbfbf',
-		AMBER_WARNING: '#F0B544',
-		RED_WARNING: '#ce2029',
-		BOLD_LIGHT: '#141413',
-		BOLD_DARK: '#faf9f5',
-		CACHE_ACTIVE_DARK: '#3fb950',
-		CACHE_ACTIVE_LIGHT: '#1a7f37',
-		PROGRESS_MARKER_DARK: '#ffffff',
-		PROGRESS_MARKER_LIGHT: '#111111'
 	});
 })();

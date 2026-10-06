@@ -1,3 +1,47 @@
+/* Theme. Light by default, dark when claude.ai sets data-mode="dark" on <html>,
+   so a theme change needs no script. */
+:root {
+	--cc-bold: #141413;
+	--cc-float-bg: #ffffff;
+	--cc-stroke: #bfbfbf;
+	--cc-fill: #5aa6ff;
+	--cc-fill-caution: #f0b544;
+	--cc-fill-warn: #ce2029;
+	--cc-marker: #111111;
+	--cc-cache-active: #1a7f37;
+	--cc-chip-bg: rgba(0, 0, 0, 0.05);
+	--cc-chip-line: rgba(0, 0, 0, 0.18);
+	/* Tooltips, popovers and menus, to Claude's own measured spec. The tooltip
+	   colours are used only if Claude's `--cds-tooltip-*` are not defined. */
+	--cc-tip-bg: #0b0b0b;
+	--cc-tip-fg: #ffffff;
+	--cc-pop-bg: #ffffff;
+	--cc-pop-fg: #141413;
+	--cc-pop-muted: #73726c;
+	--cc-pop-ring: rgba(0, 0, 0, 0.1);
+	--cc-pop-hover: rgba(0, 0, 0, 0.05);
+	--cc-pop-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+html[data-mode="dark"] {
+	--cc-bold: #faf9f5;
+	--cc-float-bg: #2b2a27;
+	--cc-stroke: #787877;
+	--cc-fill: #2c84db;
+	--cc-marker: #ffffff;
+	--cc-cache-active: #3fb950;
+	--cc-chip-bg: rgba(255, 255, 255, 0.08);
+	--cc-chip-line: rgba(255, 255, 255, 0.22);
+	--cc-tip-bg: #20201f;
+	--cc-tip-fg: #f0efec;
+	--cc-pop-bg: #20201f;
+	--cc-pop-fg: #f0efec;
+	--cc-pop-muted: #9a988f;
+	--cc-pop-ring: rgba(255, 255, 255, 0.1);
+	--cc-pop-hover: rgba(255, 255, 255, 0.06);
+	--cc-pop-shadow: 0 8px 24px rgba(0, 0, 0, 0.32), 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
 /* Header: tokens + cache timer + export */
 .cc-header {
 	display: flex;
@@ -7,7 +51,40 @@
 	user-select: none;
 }
 
+/* The token count and cache timer share one quiet chip, in the muted text colour
+   of Claude's own header. Digits are tabular so the countdown does not shift. */
 .cc-headerItem {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 9px;
+	border-radius: 8px;
+	background: var(--cc-chip-bg);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
+.cc-headerPart {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.cc-headerSep {
+	align-self: stretch;
+	width: 0.5px;
+	margin: 2px 0;
+	background: var(--cc-chip-line);
+}
+
+/* The labels the chip no longer shows, kept for screen readers. */
+.cc-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
 	white-space: nowrap;
 }
 
@@ -67,20 +144,32 @@
 	opacity: 0.75;
 }
 
-/* Bars (mini + usage) */
-.cc-bar {
-	--cc-radius: 3px;
-	--cc-stroke: transparent;
-	--cc-fill: transparent;
-	--cc-fill-caution: var(--cc-fill);
-	--cc-fill-warn: var(--cc-fill);
-	--cc-marker: transparent;
+/* Cache timer: a green dot while the context is cached, muted while waiting. */
+.cc-cacheDot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--cc-cache-active);
+}
 
+.cc-cacheDot--pending {
+	background: currentColor;
+	opacity: 0.35;
+}
+
+.cc-cacheTime {
+	min-width: 2.2ch;
+}
+
+/* Usage bars */
+.cc-bar {
 	position: relative;
 	box-sizing: border-box;
 	width: 100%;
-	height: 6px;
-	border-radius: var(--cc-radius);
+	height: 10px;
+	flex: 1;
+	border-radius: 3px;
 	border: 1px solid var(--cc-stroke);
 	overflow: visible;
 	user-select: none;
@@ -91,15 +180,15 @@
 	height: 100%;
 	background: var(--cc-fill);
 	transition: width 300ms ease, background-color 300ms ease;
-	border-top-left-radius: max(0px, calc(var(--cc-radius) - 1px));
-	border-bottom-left-radius: max(0px, calc(var(--cc-radius) - 1px));
+	border-top-left-radius: 2px;
+	border-bottom-left-radius: 2px;
 	border-top-right-radius: 0;
 	border-bottom-right-radius: 0;
 }
 
 .cc-bar__fill.cc-full {
-	border-top-right-radius: max(0px, calc(var(--cc-radius) - 1px));
-	border-bottom-right-radius: max(0px, calc(var(--cc-radius) - 1px));
+	border-top-right-radius: 2px;
+	border-bottom-right-radius: 2px;
 }
 
 .cc-bar__fill.cc-caution {
@@ -122,35 +211,109 @@
 	pointer-events: none;
 }
 
-
-.cc-bar--usage {
-	height: 10px;
-	flex: 1;
-}
-
-/* Tooltips */
+/* Tooltip: the same box Claude draws for its own icon buttons. */
 .cc-tooltip {
 	position: fixed;
 	z-index: 9999;
-	padding: 4px 8px;
-	border-radius: 4px;
-	font-size: 12px;
-	white-space: pre-line;
+	max-width: 240px;
+	padding: 3px 8px;
+	border-radius: 6px;
+	background: var(--cds-tooltip-bg, var(--cc-tip-bg));
+	color: var(--cds-tooltip-fg, var(--cc-tip-fg));
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 1px 2px rgba(11, 11, 11, 0.06), 0 2px 8px rgba(0, 0, 0, 0.24);
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 400;
 	user-select: none;
 	pointer-events: none;
 	opacity: 0;
-	transition: opacity 200ms ease;
+	transition: opacity 120ms ease;
+}
+
+.cc-tooltip--on {
+	opacity: 1;
+}
+
+/* A tooltip with an action can be reached and clicked. */
+.cc-tooltip--action {
+	pointer-events: auto;
+	cursor: pointer;
+}
+
+.cc-tooltip--action:hover .cc-tooltip__hint {
+	opacity: 1;
+	text-decoration: underline;
+}
+
+/* A trailing cue, muted like the shortcut in Claude's own tooltips. */
+.cc-tooltip__hint {
+	margin-left: 6px;
+	opacity: 0.6;
 }
 
 .cc-tooltipTrigger {
-	-webkit-touch-callout: none;
-	-webkit-user-select: none;
 	user-select: none;
-	cursor: help;
 }
 
-/* Refresh button */
-.cc-refreshBtn {
+.cc-tooltipTrigger[aria-haspopup] {
+	cursor: pointer;
+}
+
+.cc-tooltipTrigger[role="button"]:focus-visible {
+	outline: 2px solid var(--cc-fill);
+	outline-offset: 2px;
+	border-radius: 6px;
+}
+
+/* Popover and menu: Claude's popover surface. */
+.cc-popover,
+.cc-exportMenu {
+	position: fixed;
+	z-index: 9999;
+	box-sizing: border-box;
+	background: var(--cc-pop-bg);
+	color: var(--cc-pop-fg);
+	border-radius: 12px;
+	box-shadow: inset 0 0 0 1px var(--cc-pop-ring), var(--cc-pop-shadow);
+	font-size: 14px;
+	line-height: 20px;
+	user-select: none;
+}
+
+.cc-popover {
+	width: 300px;
+	padding: 12px 14px;
+}
+
+.cc-popover__title {
+	margin-bottom: 6px;
+	color: var(--cc-pop-muted);
+	font-size: 13px;
+}
+
+.cc-popover__row {
+	display: flex;
+	justify-content: space-between;
+	padding: 3px 0;
+}
+
+.cc-popover__row span:last-child {
+	color: var(--cc-pop-muted);
+}
+
+.cc-popover__note {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--cc-pop-ring);
+	color: var(--cc-pop-muted);
+	font-size: 13px;
+	line-height: 18px;
+}
+
+/* Refresh and export buttons: the same dimmed icon button. */
+.cc-refreshBtn,
+.cc-exportBtn {
+	color: var(--cc-bold);
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -164,7 +327,8 @@
 	border-radius: 3px;
 }
 
-.cc-refreshBtn:hover {
+.cc-refreshBtn:hover,
+.cc-exportBtn:hover {
 	opacity: 0.9;
 }
 
@@ -181,23 +345,43 @@
 	animation: cc-spin 0.7s linear infinite;
 }
 
-/* Export button + format menu */
-.cc-exportBtn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
-	padding: 2px;
-	background: none;
-	border: none;
-	cursor: pointer;
-	opacity: 0.45;
-	transition: opacity 150ms ease;
-	border-radius: 3px;
+/* Last resort when claude.ai's layout leaves no place for a part: float it over
+   the page rather than lose it. See CounterUI._ensureShown. */
+.cc-floating {
+	position: fixed !important;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 9998;
+	width: auto !important;
+	max-width: calc(100vw - 24px);
+	margin: 0 !important;
+	padding: 4px 12px !important;
+	border-radius: 999px;
+	background: var(--cc-float-bg);
+	color: var(--cc-bold);
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
-.cc-exportBtn:hover {
-	opacity: 0.9;
+.cc-floating .cc-headerItem {
+	padding: 0;
+	background: none;
+}
+
+.cc-header.cc-floating {
+	top: 56px;
+}
+
+.cc-usageRow.cc-floating {
+	bottom: 8px;
+}
+
+/* Export button + format menu (base look shared with the refresh button above) */
+
+/* Docked beside Claude's own page icon: its classes supply the look, size and
+   hover. This only undoes what the undocked button needs and the docked one
+   does not (the dimmed resting opacity). */
+.cc-exportBtn--docked {
+	opacity: 1;
 }
 
 .cc-exportBtn--busy {
@@ -211,18 +395,10 @@
 }
 
 .cc-exportMenu {
-	position: fixed;
-	z-index: 9999;
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
-	min-width: 150px;
+	min-width: 160px;
 	padding: 4px;
-	border-radius: 8px;
-	border-width: 1px;
-	border-style: solid;
-	box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
-	user-select: none;
 }
 
 .cc-exportMenuItem {
@@ -231,16 +407,15 @@
 	border: none;
 	color: inherit;
 	font: inherit;
-	font-size: 12px;
 	text-align: left;
 	white-space: nowrap;
 	padding: 6px 10px;
-	border-radius: 5px;
+	border-radius: 8px;
 	cursor: pointer;
 }
 
 .cc-exportMenuItem:hover {
-	background: rgb(127 127 127 / 0.18);
+	background: var(--cc-pop-hover);
 }
 
 /* Hide optional elements completely (no layout space) */

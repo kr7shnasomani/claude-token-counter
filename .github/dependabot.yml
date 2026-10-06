@@ -17,8 +17,8 @@ updates:
     commit-message:
       prefix: "chore(actions)"
 
-  # package.json currently carries only a test script. This entry is here so that
-  # any dependency added later is watched from the moment it lands.
+  # package.json carries dev dependencies only (the linter). This entry watches
+  # them, and any dependency added later, from the moment it lands.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:

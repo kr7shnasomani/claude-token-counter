@@ -82,7 +82,7 @@
 
 	<div id="feedback" hidden>
 		<textarea id="feedbackText" rows="5" placeholder="Describe the issue"></textarea>
-		<p class="note" id="feedbackNote"></p>
+		<p class="note" id="feedbackNote">Opens a prefilled issue on GitHub for you to review and submit. Your extension version, browser, plan, and which Claude layout you are on are included so the problem can be reproduced.</p>
 		<div class="btnRow">
 			<button class="btn" id="feedbackCancel" type="button">Cancel</button>
 			<button class="btn btn--primary" id="feedbackSend" type="button">Open issue</button>
@@ -93,6 +93,7 @@
 
 	<div class="foot"><span class="stamp" id="stamp"></span></div>
 
+	<script src="../content/constants.js"></script>
 	<script src="popup.js"></script>
 </body>
 

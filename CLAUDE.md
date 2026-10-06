@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm test                        # all 10 suites via test/run.js
+npm test                        # every suite via test/run.js
 node test/security.test.js      # one suite (each file runs standalone)
 npm run lint                    # eslint .
 ```
@@ -45,8 +45,123 @@ then a `rounded-composer` class, which exists only on some variants; then by
 column with a corner radius and a painted background. The header has its own
 three-tier fallback (`chat-title-split` → `chat-header` → semantic `<header>`).
 Do not replace either with a single selector; that is exactly what broke before.
-Neither is covered by a test — they need a real page — so they are the most
-fragile code here.
+The composer tiers are not covered by a test — they need a real page — and the
+header tiers are tested only for being reachable, not for how they look, so these
+are the most fragile code here.
+
+**Every header tier must be reachable.** `attachHeader` falls back from
+`chat-title-split` to `chat-header` to a semantic `<header>`. It used to run only
+once a waiter had seen the title testid, so on a layout without it the fallbacks
+were unreachable and the counter and timer never appeared while the composer's
+usage row did (reports filed as `Claude UI: class`). There are no waiters now:
+`handleUrlChange` and the DOM observer in `ui.js` call `attachHeader` and
+`attachUsageLine` directly, and each does nothing until its anchor exists. The
+observer searches at most once a second (it runs on every mutation batch, which
+during streaming is hundreds a second) and schedules one retry when a batch fell
+inside that window, because an idle page sends no second batch to look again on.
+`test/header-attach.test.js` pins each tier from the observer, and the retry.
+
+**There are two ways to learn a reply has finished, and the newer layout only
+has one.** The older layout streams the reply from a `/completion` request the
+bridge can read. The newer one sends over its own RPC (`PerformAction`) and
+writes the reply to a connection opened earlier (`StreamTimeline`, Connect
+protobuf), so the bridge never sees a reply start or end and the token count and
+cache timer froze after the first message. The page marks a reply in progress
+with `data-is-streaming="true"` on the assistant message (and `aria-busy` on the
+send button): `main.js` `watchStreaming()` watches that attribute, so it works
+in every language, and refetches when it clears. It stands down for two seconds
+after a bridge-announced end so a layout with both does not fetch twice. Usage is
+refreshed over REST after each such reply, since the stream's `message_limit`
+event is not readable here (free tier, whose REST usage is null, therefore does
+not update live on the newer layout). `test/dom-streaming.test.js` covers it.
+
+**The extension must stay visible whatever claude.ai does.** `ui._ensureShown()`
+runs every tick: a header counter or usage row that has something to show but
+has not been painted for three ticks is lifted onto `document.body` and floated
+as a pill (`.cc-floating`), and tried in its real place again every 30 seconds
+(no flicker: a floating part is excluded from the faster re-attach checks). It
+never floats on a guess: with no layout to ask (`getClientRects` absent, as in
+the test shim) a part counts as painted. Reports list what floated.
+`test/always-shown.test.js` covers it.
+
+**The export button docks into Claude's own action group.** In a chat it is
+moved to be the first child of `[data-testid="wiggle-controls-actions"]` (left
+of the page icon) and takes the classes, design-system attributes and paint
+child of an icon-only button already there, so size, colour and hover match
+without us copying Claude's CSS; the icon is our own 18px SVG because Claude's
+are font glyphs. Claude re-renders and rearranges that group as panels open, so
+`_exportStale()` is checked from the throttled DOM observer and the button put
+back. The group is drawn after the header, so on load the button is held back
+(`EXPORT_DOCK_GRACE_MS`) rather than shown beside the counter and then jumping;
+only if no group turns up in that time, or one that was there goes away, or off
+a `/chat/` page, does it settle in the header beside the counter. Docked, it is not in `headerContainer`, so its setting and
+"there is a conversation" rules are applied to it directly
+(`_syncExportVisibility`). `test/export-dock.test.js` covers it; whether it
+actually looks right needs a real page.
+
+**Colours live in the stylesheet, not in script.** `styles.css` defines the
+`--cc-*` custom properties on `:root` and overrides them under
+`html[data-mode="dark"]`, so a theme change needs no code. Do not set colours
+from JS: an inline colour also beats the classes the docked export button borrows
+from Claude. Whether a colour is *right* needs a real page; `composer.html`
+(below) renders every coloured part, and flipping `data-mode` on it is the check.
+
+**The counter and timer are one chip, and their labels are not drawn.** The
+header shows `18 tokens | ● 2:16` in a quiet pill beside Claude's title; the
+words "Token Counter:" and "Cached Context Timer:" stay in the DOM as
+screen-reader text (`.cc-sr`) and the tooltips explain them, so `textContent`
+(and the tests that read it) still carries them. The dot is the cached signal:
+green while a countdown runs, muted while a reply is awaited. The separator is a
+drawn element, not a `|` character. A floating pill drops the chip's own
+background. `composer.html` has a mock Claude header to judge it against.
+
+**Everything hoverable uses Claude's own tooltip, measured rather than guessed.**
+One shared `.cc-tooltip` node serves the chip's two parts, the export and refresh
+buttons and both usage bars, and the export menu and the context popover use
+Claude's popover surface. Values read off claude.ai on 2026-10-07: tooltip
+`#20201f` on `#f0efec` (dark; Claude inverts it to `#0b0b0b` on `#fff` in light),
+13px/18px, padding 3px 8px, radius 6px, max-width 240px, a 1px inner white ring at
+10% and a soft shadow, 0.12s fade, shown after a short delay; popover/menu
+`#20201f`, radius 12px, ring plus `0 8px 24px` shadow, rows 32px at 14px/20px.
+Claude's tooltip colours are the CSS variables `--cds-tooltip-bg`/`-fg`, which
+`styles.css` reads with our own values as the fallback, so a restyle on their side
+is followed for free. The popup's `[data-tip]` labels use the same spec.
+Re-measure when Claude changes it: open its "+" menu and hover a sidebar button.
+
+A tooltip that offers an action (the token counter's "Click for details") is
+interactive: it stays while the pointer is on it (`TOOLTIP_GRACE_MS` to cross the
+gap) and clicking it opens the popover. It was not at first, and a user reaching
+for the cue found it gone. Do not give a tooltip a "click" cue without that.
+`test/tooltip.test.js` fires real events at the real UI.
+
+**A requested conversation is answered once.** The bridge returns a fetched
+conversation in the response only; `main.js` `fetchConversation` feeds it to the
+counter. The `cc:conversation` broadcast is for conversations the page itself
+fetched. Doing both cloned a whole conversation across the world boundary twice
+per refresh.
+
+**Counting is not cached.** The tokenizer counts about 1 MB in 30 ms, so every
+refresh counts the whole trunk. A per-message cache used to key on a SHA-256 that
+had to be fetched from the page world one `postMessage` round trip per message,
+which cost far more than the counting it saved.
+
+**The plan travels with the diagnostics, not the usage snapshot.** The snapshot
+is written only once an account reports usage, so a plan kept there was
+"unknown" in every free-tier report (issue 9 on 1.0.10: `Plan: unknown`, `Claude
+UI: unknown`). `publishDiagnostics` resolves the plan itself (three attempts, only
+once an org id exists, never guessed as FREE) and the popup falls back to it. When
+*both* lines are unknown the popup now says no claude.ai tab has reported: a tab
+open before install is not injected until reloaded. `test/plan.test.js` covers it.
+Issue links point at `kr7shnasomani`; the old `kr1shnasomani` only redirects, and
+would misroute reports if anyone claimed that name.
+
+**Bug reports carry diagnostics.** `ui.getDiagnostics()` is published to
+`cc:diag` (its own key - the usage snapshot is never written for free accounts
+with no usage) and the popup appends it to the issue: Claude's build id/date from
+`<html data-build-id>`, composer and header tier, which parts are actually
+painted, and the last five swallowed errors. Plain facts only, never ids or
+conversation text. Claude has no public UI-version name; build id plus the tier
+labels is the best identifier available.
 
 **claude.ai does not refetch the conversation after a reply.** It renders the
 reply from the completion stream, so the token count and cache timer - both
@@ -122,7 +237,10 @@ was actually used rather than the one first written.
 
 ## Popup and settings
 
-The popup is a separate document and cannot read the content script's memory.
+The popup is a separate document and cannot read the content script's memory,
+though it does load `src/content/constants.js` ahead of `popup.js`, so the storage
+keys, settings defaults, plan labels, `getStorage`/`storageGet` and the usage-window
+normaliser (`CC.usageWindow`) exist once and are shared, not mirrored.
 The content script mirrors each usage reading into `chrome.storage.local`
 (`cc:usageSnapshot`); the popup renders that snapshot with a timestamp. Pressing
 refresh requests the optional claude.ai host permission at that moment, so a
@@ -161,10 +279,11 @@ after reading the diff.
 The harness can load `main.js`, which needs `window.location`, `setInterval`,
 `document.hidden` and `fetch` to exist. `setInterval` is a no-op stub — the real
 one would keep the test process alive — so suites drive `tick()` themselves, and
-`fetch` rejects so a stray request fails loudly instead of hanging. A few older
-assertions in `settings.test.js` still match against `main.js` *source text*;
-they predate the harness being able to run it, and are worth converting to real
-behaviour tests when that file is next touched.
+`fetch` rejects so a stray request fails loudly instead of hanging. To drive
+`tick()`, pass your own `setInterval` to `loadWith` and capture the callback (see
+`test/plan.test.js`). `popup.test.js` still matches against popup *source text*,
+because the popup is its own document; prefer a behaviour test where one is
+possible.
 
 ## What the suites cannot reach
 
@@ -180,7 +299,8 @@ python3 -m http.server 8777   # then open /test/fixtures/composer.html
 
 It builds all three composer variants — `[data-cds="ChatComposer"]`, the
 `rounded-composer` class, and one with neither so the shape heuristic has to
-find it — and attaches a real `CounterUI` to each. It has already earned its
+find it — and attaches a real `CounterUI` to each, plus a mock Claude header for the
+counter chip. It has already earned its
 keep twice: it caught `uiVariant` reporting `new` for two different layouts, and
 `.cc-usageRow` having no layout of its own. Both were invisible to `npm test`.
 The stylesheet and scripts load with cache-busters; without them the browser

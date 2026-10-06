@@ -7,8 +7,8 @@
 	--fill-caution: #f0b544;
 	--fill-warn: #ce2029;
 	--field: #fbfbfa;
-	--tip-bg: #26251f;
-	--tip-text: #faf9f5;
+	--tip-bg: #0b0b0b;
+	--tip-text: #ffffff;
 	color-scheme: light dark;
 }
 
@@ -22,8 +22,8 @@
 		--fill-caution: #f0b544;
 		--fill-warn: #ce2029;
 		--field: #191817;
-		--tip-bg: #3a3934;
-		--tip-text: #faf9f5;
+		--tip-bg: #20201f;
+		--tip-text: #f0efec;
 	}
 }
 
@@ -192,12 +192,14 @@ body {
 	top: calc(100% + 6px);
 	left: 50%;
 	transform: translateX(-50%);
-	padding: 4px 8px;
+	padding: 3px 8px;
 	border-radius: 6px;
 	background: var(--tip-bg);
 	color: var(--tip-text);
-	font-size: 11.5px;
-	font-weight: 500;
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 1px 2px rgba(11, 11, 11, 0.06), 0 2px 8px rgba(0, 0, 0, 0.24);
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 400;
 	white-space: nowrap;
 	pointer-events: none;
 	opacity: 0;

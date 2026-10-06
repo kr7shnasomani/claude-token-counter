@@ -1,28 +1,12 @@
 (() => {
 	'use strict';
 
-	const SNAPSHOT_KEY = 'cc:usageSnapshot';
-	const SETTINGS_KEY = 'cc:settings';
-	const ISSUES_URL = 'https://github.com/kr1shnasomani/claude-token-counter/issues/new';
+	// Shared with the content script: constants.js is loaded first by popup.html.
+	const CC = globalThis.ClaudeCounter;
+	const ISSUES_URL = 'https://github.com/kr7shnasomani/claude-token-counter/issues/new';
+	// The same shape bridge.js insists on before an id goes into a URL path.
+	const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 	const DRAFT_KEY = 'cc:feedbackDraft';
-
-	// Mirrors CC.SETTINGS_DEFAULTS in the content script.
-	const SETTINGS_DEFAULTS = {
-		tokenCounter: true,
-		cacheTimer: true,
-		exportButton: true,
-		sessionBar: true,
-		weeklyBar: true,
-		usageRefresh: true
-	};
-
-	function getStorage() {
-		try {
-			return globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local || null;
-		} catch {
-			return null;
-		}
-	}
 
 	/** "resets 4h" / "resets 6d" / "resets 12m" - coarse, like Claude's own panel. */
 	function formatReset(iso) {
@@ -75,12 +59,13 @@
 		const empty = document.getElementById('empty');
 		const content = document.getElementById('content');
 
-		if (!snapshot) {
+		const showEmpty = () => {
 			empty.hidden = false;
 			content.hidden = true;
 			document.getElementById('stamp').textContent = '';
-			return;
-		}
+		};
+
+		if (!snapshot) return showEmpty();
 
 		const hasSession = renderWindow(
 			snapshot.five_hour,
@@ -98,12 +83,7 @@
 		// Some plans report no windows at all until the first message of a session.
 		// A bare "Hourly limit" label above an empty bar looks broken; say there is
 		// nothing yet instead.
-		if (!hasSession && !hasWeekly) {
-			empty.hidden = false;
-			content.hidden = true;
-			document.getElementById('stamp').textContent = '';
-			return;
-		}
+		if (!hasSession && !hasWeekly) return showEmpty();
 
 		document.getElementById('plan').textContent = snapshot.plan ? ` · ${snapshot.plan}` : '';
 		document.getElementById('stamp').textContent = formatStamp(snapshot.updatedAt);
@@ -111,8 +91,6 @@
 		content.hidden = false;
 	}
 
-	// chrome.* takes a callback, browser.* returns a promise and ignores it. Support
-	// both, or the popup silently renders empty on one of the two browsers.
 	// --- refresh ----------------------------------------------------------------
 	// Reading usage means talking to claude.ai, which the popup cannot do on install
 	// permissions alone. That host access is optional and requested on the first
@@ -120,88 +98,13 @@
 
 	const CLAUDE_ORIGIN = 'https://claude.ai/*';
 
-	/** chrome.* uses callbacks, browser.* returns promises; accept either. */
-	function storageGet(storage, key) {
-		return new Promise((resolve) => {
-			let done = false;
-			const finish = (value) => {
-				if (done) return;
-				done = true;
-				resolve(value || null);
-			};
-			try {
-				const maybePromise = storage.get(key, finish);
-				if (maybePromise && typeof maybePromise.then === 'function') maybePromise.then(finish, () => finish(null));
-			} catch {
-				finish(null);
-			}
-		});
-	}
-
-	function getPermissions() {
+	async function requestHostAccess() {
 		try {
-			return globalThis.browser?.permissions || globalThis.chrome?.permissions || null;
+			const permissions = globalThis.browser?.permissions || globalThis.chrome?.permissions;
+			return !!(await permissions?.request({ origins: [CLAUDE_ORIGIN] }));
 		} catch {
-			return null;
+			return false;
 		}
-	}
-
-	function requestHostAccess() {
-		const permissions = getPermissions();
-		if (!permissions) return Promise.resolve(false);
-		return new Promise((resolve) => {
-			let done = false;
-			const finish = (granted) => {
-				if (done) return;
-				done = true;
-				resolve(!!granted);
-			};
-			try {
-				const maybePromise = permissions.request({ origins: [CLAUDE_ORIGIN] }, finish);
-				if (maybePromise && typeof maybePromise.then === 'function') maybePromise.then(finish, () => finish(false));
-			} catch {
-				finish(false);
-			}
-		});
-	}
-
-	function normalizeWindow(raw, key) {
-		const win = raw?.[key];
-		if (!win || typeof win.utilization !== 'number' || !Number.isFinite(win.utilization)) return null;
-		return {
-			utilization: Math.max(0, Math.min(100, win.utilization)),
-			resets_at: typeof win.resets_at === 'string' ? win.resets_at : null
-		};
-	}
-
-	const PLAN_LABELS = [
-		['claude_max', 'MAX'],
-		['claude_pro', 'PRO']
-	];
-
-	// `raven` is the organisation tier and covers Team and Enterprise alike: a real
-	// Team org reports exactly ["raven", "chat"], so the capability list cannot tell
-	// the two apart. `raven_type` on the org object names which one it is.
-	// `claude_team` used to sit in the list above and never matched anything: it is
-	// the value of a reporting field on the org object, not a capability.
-	const RAVEN_TYPES = [
-		['team', 'TEAM'],
-		['enterprise', 'ENTERPRISE']
-	];
-
-	/** Plan label for an org object, or FREE when nothing identifies it. */
-	function planFromOrg(org) {
-		const caps = Array.isArray(org?.capabilities) ? org.capabilities : [];
-		if (caps.includes('raven')) {
-			const type = typeof org?.raven_type === 'string' ? org.raven_type.toLowerCase() : null;
-			const raven = RAVEN_TYPES.find(([t]) => t === type);
-			// An unrecognised org tier falls back to TEAM rather than dropping to
-			// FREE: Team is much the commoner of the two, so it is the better guess
-			// if Anthropic ever adds a third `raven_type`.
-			return raven ? raven[1] : 'TEAM';
-		}
-		const match = PLAN_LABELS.find(([cap]) => caps.includes(cap));
-		return match ? match[1] : 'FREE';
 	}
 
 	async function refresh() {
@@ -218,7 +121,7 @@
 
 			// With host access the popup can discover the account on its own, so a
 			// first run works without ever having opened claude.ai in a tab.
-			let orgId = current?.orgId || null;
+			let orgId = ID_PATTERN.test(current?.orgId) ? current.orgId : null;
 			let plan = current?.plan || null;
 			if (!orgId || !plan) {
 				const orgRes = await fetch('https://claude.ai/api/organizations', { credentials: 'include' });
@@ -230,8 +133,8 @@
 				const payload = await orgRes.json();
 				const list = Array.isArray(payload) ? payload : [payload];
 				const org = list.find((o) => o?.uuid === orgId) || list[0];
-				orgId = org?.uuid || orgId;
-				plan = planFromOrg(org);
+				orgId = ID_PATTERN.test(org?.uuid) ? org.uuid : orgId;
+				plan = CC.planFromOrg(org);
 			}
 			if (!orgId) {
 				stamp.textContent = 'No account found';
@@ -250,8 +153,8 @@
 
 			// Plans whose usage endpoint reports nothing would otherwise wipe a good
 			// reading that came from the message stream. Keep what we already had.
-			const five = normalizeWindow(raw, 'five_hour');
-			const seven = normalizeWindow(raw, 'seven_day');
+			const five = CC.usageWindow(raw?.five_hour);
+			const seven = CC.usageWindow(raw?.seven_day);
 
 			current = {
 				...(current || {}),
@@ -264,15 +167,10 @@
 			// Only restamp the reading when the response actually carried one. Free
 			// plans answer with empty windows, and moving the timestamp forward there
 			// would present month-old numbers as if they had just been confirmed.
-			if (five || seven) {
-				current.updatedAt = Date.now();
-				storage.set({ [SNAPSHOT_KEY]: current });
-				render(current);
-			} else {
-				storage.set({ [SNAPSHOT_KEY]: current });
-				render(current);
-				stamp.textContent = 'Your plan does not report usage on demand';
-			}
+			if (five || seven) current.updatedAt = Date.now();
+			storage.set({ [CC.SNAPSHOT_KEY]: current });
+			render(current);
+			if (!five && !seven) stamp.textContent = 'Your plan does not report usage on demand';
 		} catch {
 			stamp.textContent = 'Could not refresh';
 		} finally {
@@ -355,6 +253,22 @@
 		}
 	}
 
+	const yn = (v) => (v ? 'yes' : 'no');
+
+	/** The page-side facts a layout bug needs, as report lines. Empty if none yet. */
+	function diagLines(d) {
+		if (!d || typeof d !== 'object') return [];
+		const lines = [
+			`Claude build: ${d.build || 'unknown'}${d.buildDate ? ` (${d.buildDate})` : ''}, colors ${d.colors || 'unknown'}`,
+			`Layout: composer=${d.composer || 'none'}, header=${d.header || 'none'}, export=${d.exportAt || 'header'}, cds-root=${yn(d.cdsRoot)}`,
+			`Shown: tokens=${yn(d.tokens)} timer=${yn(d.timer)} usageRow=${yn(d.usageRow)} export=${yn(d.exportBtn)}`
+		];
+		if (Array.isArray(d.floating) && d.floating.length) lines.push(`Floating, no place found: ${d.floating.join(', ')}`);
+		if (Array.isArray(d.disabled) && d.disabled.length) lines.push(`Turned off in settings: ${d.disabled.join(', ')}`);
+		if (Array.isArray(d.errors) && d.errors.length) lines.push(`Errors: ${d.errors.join('; ')}`);
+		return lines;
+	}
+
 	/**
 	 * Opens a prefilled issue rather than posting one. Creating issues from here
 	 * would mean shipping a GitHub token inside the extension, where anyone could
@@ -365,11 +279,16 @@
 		const description = document.getElementById('feedbackText').value.trim();
 		if (!description) return;
 
+		const diag = (await CC.storageGet(CC.DIAG_KEY))?.[CC.DIAG_KEY];
 		const facts = [
 			`Extension: ${runtimeVersion()}`,
 			`Browser: ${await describeBrowser()}`,
-			`Plan: ${current?.plan || 'unknown'}`,
-			`Claude UI: ${current?.uiVariant || 'unknown'}`
+			`Plan: ${current?.plan || diag?.plan || 'unknown'}`,
+			`Claude UI: ${diag?.composer || current?.uiVariant || 'unknown'}`,
+			// Both unknown can mean the extension never ran on claude.ai - a tab open
+			// before install is not injected until it is reloaded - rather than a bug.
+			...(diag || current ? [] : ['Seen on claude.ai: no (no claude.ai tab has reported since install or reload)']),
+			...diagLines(diag)
 		];
 		const body = `${description}\n\n---\n${facts.join('\n')}\n`;
 		const url = `${ISSUES_URL}?title=${encodeURIComponent(description.split('\n')[0].slice(0, 70))}&body=${encodeURIComponent(body)}`;
@@ -377,7 +296,7 @@
 		window.open(url, '_blank', 'noopener');
 		// The report is on its way out, so the draft has served its purpose.
 		document.getElementById('feedbackText').value = '';
-		storage.remove ? storage.remove(DRAFT_KEY) : storage.set({ [DRAFT_KEY]: '' });
+		storage.remove(DRAFT_KEY);
 		showPanel('usage');
 	}
 
@@ -385,16 +304,13 @@
 		const text = document.getElementById('feedbackText');
 		const send = document.getElementById('feedbackSend');
 
-		document.getElementById('feedbackNote').textContent =
-			'Opens a prefilled issue on GitHub for you to review and submit. Your extension version, browser, plan, and which Claude layout you are on are included so the problem can be reproduced.';
-
 		const sync = () => {
 			send.disabled = !text.value.trim();
 		};
 
 		// A popup closes the moment it loses focus, which is easy to do by accident
 		// halfway through writing a report. Keep the draft until it is actually sent.
-		storageGet(storage, DRAFT_KEY).then((items) => {
+		CC.storageGet(DRAFT_KEY).then((items) => {
 			const draft = items?.[DRAFT_KEY];
 			if (typeof draft === 'string' && draft && !text.value) text.value = draft;
 			sync();
@@ -416,8 +332,8 @@
 	function wireSettings(storage) {
 		const boxes = [...document.querySelectorAll('.opt input[data-key]')];
 
-		storageGet(storage, SETTINGS_KEY).then((items) => {
-			const merged = { ...SETTINGS_DEFAULTS, ...(items?.[SETTINGS_KEY] || {}) };
+		CC.storageGet(CC.SETTINGS_KEY).then((items) => {
+			const merged = { ...CC.SETTINGS_DEFAULTS, ...(items?.[CC.SETTINGS_KEY] || {}) };
 			for (const box of boxes) box.checked = merged[box.dataset.key] !== false;
 		});
 
@@ -425,33 +341,24 @@
 			box.addEventListener('change', () => {
 				const next = {};
 				for (const other of boxes) next[other.dataset.key] = other.checked;
-				storage.set({ [SETTINGS_KEY]: next });
+				storage.set({ [CC.SETTINGS_KEY]: next });
 			});
 		}
 
 		document.getElementById('settingsBtn').addEventListener('click', () => togglePanel('settings'));
 	}
 
-	const storage = getStorage();
+	const storage = CC.getStorage();
 	if (!storage) {
 		render(null);
 		return;
 	}
 
 	let current = null;
-	let settled = false;
-	const done = (items) => {
-		if (settled) return;
-		settled = true;
-		current = items?.[SNAPSHOT_KEY] || null;
+	CC.storageGet(CC.SNAPSHOT_KEY).then((items) => {
+		current = items?.[CC.SNAPSHOT_KEY] || null;
 		render(current);
-	};
-	try {
-		const maybePromise = storage.get(SNAPSHOT_KEY, done);
-		if (maybePromise && typeof maybePromise.then === 'function') maybePromise.then(done, () => done(null));
-	} catch {
-		done(null);
-	}
+	});
 
 	document.getElementById('refresh').addEventListener('click', () => {
 		// Refreshing from another panel should show the numbers it just fetched.

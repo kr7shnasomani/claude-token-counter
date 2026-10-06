@@ -22,6 +22,8 @@ async function seedWith(snapshot) {
 const ctx = load('src/content/constants.js', 'src/content/ui.js');
 const ui = new ctx.ClaudeCounter.ui.CounterUI();
 ui.initialize();
+// Past the grace period the export button waits out for Claude's action group.
+ui.exportFallbackOk = true;
 ui.setConversationMetrics({ totalTokens: 42, cachedUntil: Date.now() + 180000 });
 ui.setUsage({
 	five_hour: { utilization: 20, resets_at: new Date(Date.now() + 3e6).toISOString() },
@@ -45,7 +47,7 @@ section('each toggle removes exactly its own element');
 ui.applySettings({ tokenCounter: false });
 t('token counter off', !header().includes('Token Counter'));
 t('  cache timer survives', header().includes('Cached Context Timer'));
-t('  no stray separator', !header().includes('|'));
+t('  no stray separator', !ui.headerDisplay.children.some((c) => String(c.className).includes('cc-headerSep')));
 
 ui.applySettings({ cacheTimer: false });
 t('cache timer off', !header().includes('Cached Context Timer'));
@@ -111,6 +113,9 @@ t('  no lone bar', !hidden(one.usageLine));
 
 one = only({ five_hour: { utilization: 2, resets_at: later(5 * 3600e3) }, seven_day: null });
 t('the mirror case works too', one.weeklyUsageSpan.textContent === 'Weekly: \u2014' && one.sessionUsageSpan.textContent.includes('2%'));
+// The text alone passed while the span and bar carried `cc-hidden`, leaving the
+// dash invisible and an empty gap where the weekly slot should read as unknown.
+t('  and its dash is actually shown', !hidden(one.weeklyUsageSpan) && !hidden(one.weeklyBar));
 
 one = only({ five_hour: { utilization: 2, resets_at: later(5 * 3600e3) },
 	seven_day: { utilization: 29, resets_at: later(3 * 86400e3) } });

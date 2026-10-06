@@ -5,30 +5,6 @@
 
 	const ROOT_MESSAGE_ID = '00000000-0000-4000-8000-000000000000';
 
-	function stableStringify(value) {
-		const seen = new WeakSet();
-
-		const normalize = (v) => {
-			if (v === null || typeof v !== 'object') return v;
-			if (seen.has(v)) return '[Circular]';
-			seen.add(v);
-
-			if (Array.isArray(v)) return v.map(normalize);
-
-			const out = {};
-			for (const key of Object.keys(v).sort()) {
-				out[key] = normalize(v[key]);
-			}
-			return out;
-		};
-
-		try {
-			return JSON.stringify(normalize(value));
-		} catch {
-			return '';
-		}
-	}
-
 	function getTokenizer() {
 		return globalThis.GPTTokenizer_o200k_base || null;
 	}
@@ -88,7 +64,7 @@
 				name: item.name,
 				input: item.input
 			};
-			return stableStringify(minimal);
+			return JSON.stringify(minimal);
 		}
 
 		if (item.type === 'tool_result') {
@@ -97,7 +73,7 @@
 				is_error: item.is_error,
 				content: item.content
 			};
-			return stableStringify(minimal);
+			return JSON.stringify(minimal);
 		}
 
 		// Fallback: keep only known-ish textual fields to avoid pulling in huge binary-ish blobs.
@@ -108,7 +84,7 @@
 		if (typeof item.content === 'string') minimal.content = item.content;
 		if (Array.isArray(item.content)) minimal.content = item.content;
 		if (Object.keys(minimal).length === 0) return '';
-		return stableStringify(minimal);
+		return JSON.stringify(minimal);
 	}
 
 	function stringifyMessageCountables(message) {
@@ -132,54 +108,8 @@
 		return parts.join('\n');
 	}
 
-	async function hashString(str) {
-		if (!CC.bridge?.requestHash) return null;
-		try {
-			const res = await CC.bridge.requestHash(str);
-			if (res?.hash) return res.hash;
-		} catch {
-			// No local hashing fallback.
-		}
-		return null;
-	}
-
-	async function fingerprint(text) {
-		if (!text) return null;
-		const hash = await hashString(text);
-		if (!hash) return null;
-		return `${text.length}:${hash}`;
-	}
-
-	class TokenCache {
-		constructor() {
-			this._byMessageId = new Map(); // uuid -> { fp, tokens }
-		}
-
-		async getMessageTokens(messageId, messageText) {
-			const fp = await fingerprint(messageText);
-			if (!fp) return countTokens(messageText);
-			const cached = this._byMessageId.get(messageId);
-			if (cached && cached.fp === fp) return cached.tokens;
-
-			const tokens = countTokens(messageText);
-			this._byMessageId.set(messageId, { fp, tokens });
-			return tokens;
-		}
-
-		pruneToMessageIds(keepIds) {
-			const keep = new Set(keepIds);
-			for (const id of this._byMessageId.keys()) {
-				if (!keep.has(id)) this._byMessageId.delete(id);
-			}
-		}
-	}
-
-	const tokenCache = new TokenCache();
-
-	async function computeConversationMetrics(conversation) {
+	function computeConversationMetrics(conversation) {
 		const trunk = buildTrunk(conversation);
-		const trunkIds = trunk.map((m) => m.uuid).filter(Boolean);
-		tokenCache.pruneToMessageIds(trunkIds);
 
 		let totalTokens = 0;
 		let lastAssistantMs = null;
@@ -192,18 +122,11 @@
 				}
 			}
 
-			const msgText = stringifyMessageCountables(msg);
-			const msgTokens = msg?.uuid ? await tokenCache.getMessageTokens(msg.uuid, msgText) : countTokens(msgText);
-			totalTokens += msgTokens;
+			totalTokens += countTokens(stringifyMessageCountables(msg));
 		}
 		const cachedUntil = lastAssistantMs ? lastAssistantMs + CC.CONST.CACHE_WINDOW_MS : null;
 
-		return {
-			trunkMessageCount: trunk.length,
-			totalTokens,
-			lastAssistantMs,
-			cachedUntil
-		};
+		return { totalTokens, cachedUntil };
 	}
 
 	CC.tokens = { computeConversationMetrics, buildTrunk };

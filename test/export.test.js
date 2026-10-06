@@ -66,8 +66,7 @@ t('abandoned branch excluded (txt)', !txt.includes('ABANDONED BRANCH'));
 t('every trunk message present', (md.match(/^## /gm) || []).length === 3);
 
 section('nothing leaks that should not');
-t('thinking excluded by default', !md.includes('SECRET REASONING'));
-t('thinking included on request', X.buildMarkdown(conv, { includeThinking: true }).includes('SECRET REASONING'));
+t('thinking is never exported', !md.includes('SECRET REASONING') && !txt.includes('SECRET REASONING'));
 t('raw tool_result payload not dumped', !md.includes('NOISE'));
 
 section('generated files');

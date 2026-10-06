@@ -1,13 +1,14 @@
 # header
 div.text-text-500.text-xs.!px-1.cc-header
   span.cc-headerItem
-    span.cc-tooltipTrigger
+    span.cc-headerPart.cc-tooltipTrigger
       span
-        #text
+        span.cc-sr
         span
-    #text
-    span.cc-tooltipTrigger
-      #text
+    span.cc-headerSep
+    span.cc-headerPart.cc-tooltipTrigger
+      span.cc-sr
+      span.cc-cacheDot
       span.cc-cacheTime
   button.cc-exportBtn.cc-tooltipTrigger
     svg
@@ -20,15 +21,15 @@ div.text-text-400.text-[11px].cc-usageRow.flex.flex-row.items-center.gap-3.w-ful
   span.cc-usageText.cc-usageHint.cc-hidden
   div.cc-usageGroup.cc-tooltipTrigger
     span.cc-usageText
-    div.cc-bar.cc-bar--usage
+    div.cc-bar
       div.cc-bar__fill
       div.cc-bar__marker
   div.cc-usageGroup.cc-usageGroup--weekly.cc-tooltipTrigger
-    div.cc-bar.cc-bar--usage
+    div.cc-bar
       div.cc-bar__fill
       div.cc-bar__marker
     span.cc-usageText
-  button.cc-refreshBtn
+  button.cc-refreshBtn.cc-tooltipTrigger
     svg
       polyline
       path

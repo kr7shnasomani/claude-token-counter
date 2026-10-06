@@ -130,7 +130,7 @@
 	 * Reduce one message to an ordered list of renderable blocks.
 	 * Tool plumbing collapses into a single summary rather than pages of JSON.
 	 */
-	function messageBlocks(message, options, files) {
+	function messageBlocks(message, files) {
 		const blocks = [];
 		const toolCounts = new Map();
 
@@ -139,15 +139,9 @@
 				if (typeof item.text === 'string' && item.text.trim()) blocks.push({ kind: 'text', text: item.text.trim() });
 				continue;
 			}
-			if (item?.type === 'thinking' || item?.type === 'redacted_thinking') {
-				if (options.includeThinking && typeof item.thinking === 'string' && item.thinking.trim()) {
-					blocks.push({ kind: 'thinking', text: item.thinking.trim() });
-				}
-				continue;
-			}
 			if (item?.type === 'tool_use') {
 				const file = asGeneratedFile(item);
-				if (file && options.includeFiles) {
+				if (file) {
 					const state = files?.byPath.get(item.input?.path);
 					blocks.push({ kind: 'file', ...file, ...(state ? { text: state.text, edits: state.edits, failed: state.failed } : {}) });
 					continue;
@@ -175,7 +169,7 @@
 			blocks.push({ kind: 'media', name: f?.file_name || 'file', mediaKind: f?.file_kind || 'file' });
 		}
 
-		if (options.includeToolSummary && toolCounts.size) {
+		if (toolCounts.size) {
 			const parts = [...toolCounts].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
 			blocks.push({ kind: 'tools', text: parts.join(', ') });
 		}
@@ -183,107 +177,78 @@
 		return blocks;
 	}
 
-	/** " (final version, 7 edits applied)" - so replayed content isn't mistaken for the original. */
-	function editNote(block, markdown) {
+	/** "(final version, 7 edits applied)" - so replayed content isn't mistaken for the original. */
+	function editNote(block) {
 		if (!block.edits) return '';
 		const parts = [`final version, ${block.edits} edit${block.edits === 1 ? '' : 's'} applied`];
 		if (block.failed) parts.push(`${block.failed} could not be applied`);
-		const text = `(${parts.join('; ')})`;
-		return markdown ? ` *${text}*` : ` ${text}`;
+		return `(${parts.join('; ')})`;
 	}
 
-	function defaultOptions(overrides) {
-		return {
-			includeThinking: false,
-			includeFiles: true,
-			includeToolSummary: true,
-			includeTimestamps: true,
-			...overrides
-		};
-	}
+	const attachmentSize = (block) => (block.size ? ` (${block.size})` : '');
 
-	function buildMarkdown(conversation, overrides) {
-		const options = defaultOptions(overrides);
+	// How each format lays out a conversation. `turn` opens a message; every other
+	// entry renders one block kind. Both return lines.
+	const MARKDOWN = {
+		head: (title, meta) => [`# ${title}`, '', `*${meta}*`, ''],
+		turn: (who, when) => ['---', '', when ? `## ${who} · ${when}` : `## ${who}`, ''],
+		orphanEdit: (b) => [`*\u{270F}\u{FE0F} Edited \`${b.name}\` - created outside this transcript, content unavailable.*`, ''],
+		file: (b) => {
+			const fence = fenceFor(b.text);
+			const note = editNote(b);
+			return [
+				`**Generated file: \`${b.name}\`**${note && ` *${note}*`}`, '',
+				`${fence}${b.lang || fenceLanguage(b.name)}`, b.text, fence, ''
+			];
+		},
+		attachment: (b) => [`\u{1F4CE} *Attachment: ${b.name}${attachmentSize(b)}*`, ''],
+		media: (b) => [`\u{1F5BC}\u{FE0F} *${b.mediaKind}: ${b.name}*`, ''],
+		tools: (b) => [`*\u{1F527} Used: ${b.text}*`, '']
+	};
+
+	const RULE = '='.repeat(60);
+	const THIN = '-'.repeat(60);
+	const PLAIN = {
+		head: (title, meta) => [title, meta, RULE, ''],
+		turn: (who, when) => [when ? `${who.toUpperCase()}  (${when})` : who.toUpperCase(), THIN],
+		orphanEdit: (b) => [`[edited ${b.name} - created outside this transcript, content unavailable]`, ''],
+		file: (b) => {
+			const note = editNote(b);
+			return [`--- generated file: ${b.name}${note && ` ${note}`} ---`, b.text, `--- end of ${b.name} ---`, ''];
+		},
+		attachment: (b) => [`[attachment: ${b.name}${attachmentSize(b)}]`, ''],
+		media: (b) => [`[${b.mediaKind}: ${b.name}]`, ''],
+		tools: (b) => [`[used: ${b.text}]`, '']
+	};
+
+	function render(conversation, layout) {
 		const trunk = CC.tokens.buildTrunk(conversation);
 		const files = replayFiles(trunk);
-		const title = conversation?.name || 'Claude conversation';
-		const out = [`# ${title}`, ''];
 
 		const meta = [`Exported ${formatDateTime(Date.now())}`, `${trunk.length} message${trunk.length === 1 ? '' : 's'}`];
 		if (conversation?.model) meta.push(conversation.model);
-		out.push(`*${meta.join(' · ')}*`, '');
+		const out = layout.head(conversation?.name || 'Claude conversation', meta.join(' · '));
 
 		for (const message of trunk) {
 			const who = SENDER_LABEL[message?.sender] || message?.sender || 'Unknown';
-			const when = options.includeTimestamps ? formatDateTime(message?.created_at) : '';
-			out.push('---', '');
-			out.push(when ? `## ${who} · ${when}` : `## ${who}`, '');
-
-			for (const block of messageBlocks(message, options, files)) {
-				if (block.kind === 'text') out.push(block.text, '');
-				else if (block.kind === 'thinking') out.push(`> **Thinking**`, ...block.text.split('\n').map((l) => `> ${l}`), '');
-				else if (block.kind === 'orphanEdit') {
-					out.push(`*\u{270F}\u{FE0F} Edited \`${block.name}\` - created outside this transcript, content unavailable.*`, '');
-				} else if (block.kind === 'file') {
-					const fence = fenceFor(block.text);
-					out.push(`**Generated file: \`${block.name}\`**${editNote(block, true)}`, '');
-					out.push(`${fence}${block.lang || fenceLanguage(block.name)}`, block.text, fence, '');
-				} else if (block.kind === 'attachment') {
-					out.push(`\u{1F4CE} *Attachment: ${block.name}${block.size ? ` (${block.size})` : ''}*`, '');
-				} else if (block.kind === 'media') {
-					out.push(`\u{1F5BC}️ *${block.mediaKind}: ${block.name}*`, '');
-				} else if (block.kind === 'tools') {
-					out.push(`*\u{1F527} Used: ${block.text}*`, '');
-				}
+			out.push(...layout.turn(who, formatDateTime(message?.created_at)));
+			for (const block of messageBlocks(message, files)) {
+				out.push(...(block.kind === 'text' ? [block.text, ''] : layout[block.kind](block)));
 			}
 		}
 
 		return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 	}
 
-	function buildText(conversation, overrides) {
-		const options = defaultOptions(overrides);
-		const trunk = CC.tokens.buildTrunk(conversation);
-		const files = replayFiles(trunk);
-		const title = conversation?.name || 'Claude conversation';
-		const rule = '='.repeat(60);
-		const thin = '-'.repeat(60);
-
-		const meta = [`Exported ${formatDateTime(Date.now())}`, `${trunk.length} message${trunk.length === 1 ? '' : 's'}`];
-		if (conversation?.model) meta.push(conversation.model);
-		const out = [title, meta.join(' · '), rule, ''];
-
-		for (const message of trunk) {
-			const who = (SENDER_LABEL[message?.sender] || message?.sender || 'Unknown').toUpperCase();
-			const when = options.includeTimestamps ? formatDateTime(message?.created_at) : '';
-			out.push(when ? `${who}  (${when})` : who, thin);
-
-			for (const block of messageBlocks(message, options, files)) {
-				if (block.kind === 'text') out.push(block.text, '');
-				else if (block.kind === 'thinking') out.push('[thinking]', block.text, '');
-				else if (block.kind === 'orphanEdit') {
-					out.push(`[edited ${block.name} - created outside this transcript, content unavailable]`, '');
-				} else if (block.kind === 'file') {
-					out.push(`--- generated file: ${block.name}${editNote(block, false)} ---`, block.text, `--- end of ${block.name} ---`, '');
-				} else if (block.kind === 'attachment') {
-					out.push(`[attachment: ${block.name}${block.size ? ` (${block.size})` : ''}]`, '');
-				} else if (block.kind === 'media') {
-					out.push(`[${block.mediaKind}: ${block.name}]`, '');
-				} else if (block.kind === 'tools') {
-					out.push(`[used: ${block.text}]`, '');
-				}
-			}
-		}
-
-		return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
-	}
+	const buildMarkdown = (conversation) => render(conversation, MARKDOWN);
+	const buildText = (conversation) => render(conversation, PLAIN);
 
 	const FORMATS = {
 		md: { build: buildMarkdown, ext: 'md', mime: 'text/markdown' },
 		txt: { build: buildText, ext: 'txt', mime: 'text/plain' }
 	};
 
-	function buildFile(conversation, format, overrides) {
+	function buildFile(conversation, format) {
 		const spec = FORMATS[format] || FORMATS.md;
 		// Local date, not UTC: an evening export in a UTC+ timezone would otherwise be
 		// stamped with yesterday's date and disagree with the header inside the file.
@@ -292,13 +257,13 @@
 		return {
 			filename: `${slugify(conversation?.name)}-${stamp}.${spec.ext}`,
 			mime: spec.mime,
-			content: spec.build(conversation, overrides)
+			content: spec.build(conversation)
 		};
 	}
 
 	/** Hand the file to the browser. Uses a blob URL, so no `downloads` permission. */
-	function download(conversation, format, overrides) {
-		const file = buildFile(conversation, format, overrides);
+	function download(conversation, format) {
+		const file = buildFile(conversation, format);
 		const url = URL.createObjectURL(new Blob([file.content], { type: `${file.mime};charset=utf-8` }));
 		const link = document.createElement('a');
 		link.href = url;

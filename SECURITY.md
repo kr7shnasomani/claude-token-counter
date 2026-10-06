@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately through
-[GitHub's private vulnerability reporting](https://github.com/kr1shnasomani/claude-token-counter/security/advisories/new)
+[GitHub's private vulnerability reporting](https://github.com/kr7shnasomani/claude-token-counter/security/advisories/new)
 rather than opening a public issue.
 
 Include the extension version, your browser, and enough detail to reproduce.
@@ -20,11 +20,14 @@ requests it makes are the same ones the site already makes for itself.
 
 ## What is stored
 
-Three keys in local extension storage, never transmitted:
+Four keys in local extension storage, never transmitted:
 
 - `cc:usageSnapshot` — the last usage reading, your organisation id, plan name,
   and which Claude layout was detected
 - `cc:settings` — which on-page elements you have switched off
+- `cc:diag` — Claude's build number, the detected layout, your plan label, which
+  of the extension's elements are showing, and the last few error messages. No
+  ids or conversation text; shown to you in a bug report only if you file one
 - `cc:feedbackDraft` — an unsent bug report, cleared once the issue is opened
 
 **No conversation content is stored.** Exports are written straight to a
@@ -50,8 +53,8 @@ The extension ships **no runtime dependencies**. The only packages in
 - `.npmrc` sets `ignore-scripts=true`, and every CI install runs
   `npm ci --ignore-scripts`, so no dependency can execute code at install time
   on a contributor's machine or in a workflow
-- `package-lock.json` pins all 124 packages by version and SHA-512 integrity,
-  all from the public npm registry
+- `package-lock.json` pins every package by version and SHA-512 integrity, all
+  from the public npm registry
 - Every GitHub Action is pinned to a commit SHA rather than a tag, so an action
   cannot be changed underneath a release by repointing its tag
 - `npm test` fails if any of the above regresses

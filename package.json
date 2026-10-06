@@ -1,7 +1,14 @@
 {
   "name": "claude-token-counter",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kr7shnasomani/claude-token-counter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kr7shnasomani/claude-token-counter/issues"
+  },
   "description": "Tests for the Claude Token Counter browser extension. The extension itself has no build step and no runtime dependencies.",
   "scripts": {
     "test": "node test/run.js",

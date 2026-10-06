@@ -153,8 +153,6 @@ async function waitFor(cond, ms = 500) {
 		ctx.GPTTokenizer_o200k_base = { countTokens: (text) => text.split(/\s+/).length };
 		ctx.document.cookie = `lastActiveOrg=${ORG}`;
 		const CC = ctx.ClaudeCounter;
-		// Hashing lives in the page world; with no bridge each call would time out.
-		CC.bridge.requestHash = async (text) => ({ hash: String(text.length) });
 		// Load fetches usage before the conversation; unanswered, that waits 15s.
 		CC.bridge.requestUsage = async () => ({ five_hour: null, seven_day: null });
 		CC.bridge.requestOrgs = async () => [];
@@ -166,15 +164,12 @@ async function waitFor(cond, ms = 500) {
 		const msg = (uuid, parent, sender, created_at, text) => ({ uuid, parent_message_uuid: parent, sender, created_at, content: [{ type: 'text', text }] });
 		const firstTurn = [msg('a', null, 'human', at(400000), 'hello'), msg('b', 'a', 'assistant', at(390000), 'hi there')];
 		let tree = { current_leaf_message_uuid: 'b', chat_messages: firstTurn };
-		CC.bridge.requestConversation = async (orgId, conversationId) => {
-			CC.bridge._emit('cc:conversation', { orgId, conversationId, data: tree });
-			return tree;
-		};
+		CC.bridge.requestConversation = async () => tree;
 
 		vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/content/main.js'), 'utf8'), ctx);
 		await sleep(20);
 		const header = () => ui.headerContainer.textContent;
-		const tokensShown = () => Number((header().match(/~([\d,]+) tokens/) || [])[1]?.replace(/,/g, ''));
+		const tokensShown = () => Number((header().match(/([\d,]+) tokens/) || [])[1]?.replace(/,/g, ''));
 
 		t('page loads a conversation whose cache already expired', /Token Counter/.test(header()) && !/Cached Context Timer/.test(header()),
 			JSON.stringify(header()));

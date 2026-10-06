@@ -35,11 +35,23 @@ class El {
 		this.classList._s = new Set(String(v).split(/\s+/).filter(Boolean));
 	}
 	get className() { return [...this.classList._s].join(' '); }
-	appendChild(c) { this._text = null; this.children.push(c); return c; }
-	replaceChildren(...c) { this._text = null; this.children = c; }
+	appendChild(c) { this._text = null; c.parentElement = this; this.children.push(c); return c; }
+	prepend(c) { this._text = null; c.parentElement = this; this.children.unshift(c); }
+	replaceChildren(...c) { this._text = null; for (const x of c) x.parentElement = this; this.children = c; }
+	remove() {
+		const p = this.parentElement;
+		if (p) p.children = p.children.filter((x) => x !== this);
+		this.parentElement = null;
+	}
+	get firstElementChild() { return this.children[0] || null; }
+	cloneNode() { const c = new El(this.tag); c.className = this.className; return c; }
 	setAttribute(k, v) { this.attrs[k] = v; }
+	getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+	removeAttribute(k) { delete this.attrs[k]; }
 	hasAttribute(k) { return k in this.attrs; }
-	addEventListener() {}
+	// Handlers are recorded so a test can fire them with `fire(type, event)`.
+	addEventListener(type, fn) { ((this._handlers = this._handlers || {})[type] = (this._handlers[type] || [])).push(fn); }
+	fire(type, event = {}) { for (const fn of (this._handlers && this._handlers[type]) || []) fn(event); }
 	getBoundingClientRect() { return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
 }
 
@@ -58,7 +70,8 @@ function makeContext() {
 		createTextNode: (text) => { const n = new El('#text'); n.textContent = text; return n; },
 		querySelector: () => null,
 		contains: () => true,
-		addEventListener() {}
+		addEventListener(type, fn) { ((this._handlers = this._handlers || {})[type] = (this._handlers[type] || [])).push(fn); },
+		fire(type, event = {}) { for (const fn of (this._handlers && this._handlers[type]) || []) fn(event); }
 	};
 	const ctx = {
 		document, console, Date, Math, Object, String, Number, JSON, Array, Set, Map, RegExp,
@@ -95,7 +108,11 @@ function load(...files) {
  */
 function loadWith(globals, ...files) {
 	const ctx = makeContext();
-	Object.assign(ctx, globals);
+	// `setup(ctx)` runs on the sandbox before any file does, for tests that need
+	// to shape the document (which makeContext builds) rather than replace it.
+	const { setup, ...rest } = globals;
+	Object.assign(ctx, rest);
+	if (setup) setup(ctx);
 	for (const f of files) {
 		vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
 	}

@@ -182,19 +182,6 @@
 
 		const { requestId, kind, payload } = data;
 		try {
-			if (kind === 'hash') {
-				const text = typeof payload?.text === 'string' ? payload.text : '';
-				if (!text || !crypto?.subtle?.digest) {
-					postResponse(requestId, false, null, 'Hash unavailable');
-					return;
-				}
-				const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-				const bytes = new Uint8Array(buffer);
-				const hash = Array.from(bytes.slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
-				postResponse(requestId, true, { hash }, null);
-				return;
-			}
-
 			if (kind === 'usage') {
 				const orgId = safeId(payload?.orgId);
 				if (!orgId) throw new Error('Invalid orgId');
@@ -227,9 +214,9 @@
 					method: 'GET',
 					credentials: 'include'
 				});
-				const json = await res.json();
-				post('cc:conversation', { orgId, conversationId, data: json });
-				postResponse(requestId, true, json, null);
+				// Answered once, in the response: broadcasting it as well meant cloning a
+				// whole conversation across the world boundary twice per refresh.
+				postResponse(requestId, true, await res.json(), null);
 				return;
 			}
 

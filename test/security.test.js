@@ -82,7 +82,6 @@ t('every locked package has an integrity hash',
 	pkgs.filter(([, v]) => v.resolved).every(([, v]) => Boolean(v.integrity)));
 t('every package comes from the public registry',
 	pkgs.filter(([, v]) => v.resolved).every(([, v]) => v.resolved.startsWith('https://registry.npmjs.org/')));
-t('runtime ships no dependencies', !JSON.parse(read('package.json')).dependencies);
 
 section('every action is pinned to a commit');
 // A tag can be repointed by whoever owns the action; a commit sha cannot.

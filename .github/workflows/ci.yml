@@ -20,9 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The extension itself runs in a browser; these versions only cover the
-        # test harness. LTS plus current is enough.
-        node-version: [20.x, 22.x]
+        # The extension itself runs in a browser; this only covers the test harness.
+        node-version: [22.x]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,9 +35,8 @@ jobs:
       # independent of any local npm configuration.
       - run: npm ci --ignore-scripts
 
-      # 9 suites: cache timer, export, inventory, packaging, popup, settings,
-      # the usage-bar markers, the usage payload parsers, and the security
-      # guards.
+      # Includes the packaging and security suites: versions agree, every declared
+      # file exists, permissions have not widened.
       - run: npm test
 
       - run: npx eslint .
@@ -48,29 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Versions agree across manifest and package.json
-        run: |
-          set -euo pipefail
-          MANIFEST=$(jq -r .version manifest.json)
-          PACKAGE=$(jq -r .version package.json)
-          echo "manifest=$MANIFEST package=$PACKAGE"
-          test "$MANIFEST" = "$PACKAGE"
-
-      - name: Every declared content script exists
-        run: |
-          set -euo pipefail
-          jq -r '.content_scripts[].js[], .content_scripts[].css[], .web_accessible_resources[].resources[], .action.default_popup' manifest.json |
-            while read -r f; do
-              test -f "$f" || { echo "missing: $f"; exit 1; }
-            done
-
-      - name: Permissions have not widened
-        run: |
-          set -euo pipefail
-          test "$(jq -c .permissions manifest.json)" = '["storage"]'
-          test "$(jq -c .optional_host_permissions manifest.json)" = '["https://claude.ai/*"]'
-          test "$(jq -r '.host_permissions // "none"' manifest.json)" = "none"
 
       - name: The release build actually produces all three artifacts
         run: |

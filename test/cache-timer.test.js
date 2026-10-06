@@ -6,8 +6,9 @@ const ui = new ctx.ClaudeCounter.ui.CounterUI();
 ui.initialize();
 
 const header = () => ui.headerContainer.textContent || '(empty)';
-const TOKENS = (n) => `Token Counter: ~${n} tokens`;
-const CACHE = (v) => `\u00A0|\u00A0Cached Context Timer:\u00A0${v}`;
+const TOKENS = (n) => `Token Counter: ${n} tokens`;
+// The separator is a drawn line now, not text, so it adds nothing to textContent.
+const CACHE = (v) => `Cached Context Timer:\u00A0${v}`;
 const is = (label, expected) => t(label, header() === expected, `expected ${JSON.stringify(expected)}\n          got      ${JSON.stringify(header())}`);
 
 section('visible only while cached');

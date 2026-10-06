@@ -24,9 +24,30 @@
 	.composer { display:flex; flex-direction:column; background:#30302e; border-radius:16px; padding:12px; width:680px; }
 	.input { min-height:56px; padding:8px; color:#c2c0b6; }
 	.toolbar { display:flex; gap:8px; padding-top:8px; opacity:.6; }
+	.chat-header { display:flex; align-items:center; gap:8px; width:680px; height:44px; color:#9a988f; font-size:12px; }
+	.chat-header .title { color:#e8e6dc; font-size:15px; white-space:nowrap; }
+	.chat-header .chev { font-size:11px; opacity:.6; }
+	.chat-header .grow { flex:1; }
+	.chat-header .share { background:#30302e; color:#e8e6dc; border:0; border-radius:8px; padding:6px 12px; font:inherit; font-size:13px; }
+	html[data-mode="light"] body { background:#faf9f5; color:#3d3d3a; }
+	html[data-mode="light"] .composer { background:#fff; }
+	html[data-mode="light"] .chat-header { color:#73726c; }
+	html[data-mode="light"] .chat-header .title { color:#141413; }
+	html[data-mode="light"] .chat-header .share { background:#f0eee6; color:#141413; }
 </style>
 </head>
 <body>
+
+<!-- A stand-in for Claude's chat header: the counter and timer attach beside the
+     title, exactly where they do on the real page. -->
+<section>
+	<h2>header — title testid</h2>
+	<div class="chat-header">
+		<div data-testid="chat-title-split" class="title">Greeting <span class="chev">&#9662;</span></div>
+		<span class="grow"></span>
+		<button class="share">Share</button>
+	</div>
+</section>
 
 <!-- Variant 1: Claude's design-system attribute (the primary anchor). -->
 <section>
@@ -68,26 +89,35 @@
 		});
 	}
 // Attach one independent counter per composer, so all three anchoring tiers are
-// exercised on the same page. `initialize()`/`attach()` query the document
+// exercised on the same page. `initialize()`/`attachUsageLine()` query the document
 // globally, so each section is scoped by temporarily hiding the others from the
 // selectors the UI uses.
 	window.__ccResults = [];
 	document.querySelectorAll('section').forEach((section, i) => {
 	const inputs = [...document.querySelectorAll('[data-testid="chat-input"]')];
-	inputs.forEach((el, j) => { if (j !== i) el.setAttribute('data-testid', 'parked'); });
+	const k = i - 1; // section 0 is the header; the composers follow it
+	if (k < 0) {
+		const ui = new window.ClaudeCounter.ui.CounterUI();
+		ui.initialize();
+		ui.setConversationMetrics({ totalTokens: 18, cachedUntil: Date.now() + 136000 });
+		ui.attachHeader();
+		window.__ccResults.push({ label: 'header', variant: ui.headerTier, ui });
+		return;
+	}
+	inputs.forEach((el, j) => { if (j !== k) el.setAttribute('data-testid', 'parked'); });
 
 	const ui = new window.ClaudeCounter.ui.CounterUI();
 	ui.initialize();
 	// main.js normally drives this off a MutationObserver once claude.ai's own
 	// anchors appear; here the fixture is already static, so call it directly.
-	ui.attach();
+	ui.attachUsageLine();
 	ui.setUsage({
 		five_hour: { utilization: 16, resets_at: new Date(Date.now() + 2.25 * 3600e3).toISOString() },
 		seven_day: { utilization: 57, resets_at: new Date(Date.now() + 3.75 * 864e5).toISOString() }
 	});
 	window.__ccResults.push({ label: section.querySelector('h2').textContent, variant: window.ClaudeCounter.uiVariant, ui });
 
-	inputs.forEach((el, j) => { if (j !== i) el.setAttribute('data-testid', 'chat-input'); });
+	inputs.forEach((el, j) => { if (j !== k) el.setAttribute('data-testid', 'chat-input'); });
 	});
 	document.body.dataset.ccReady = '1';
 })();

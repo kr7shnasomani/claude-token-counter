@@ -26,7 +26,12 @@ t('hover label is styled, not native', css.includes('[data-tip]::after') && css.
 t('last icon label hangs left so it cannot clip', css.includes('.icon:last-child[data-tip]::after'));
 
 section('feedback opens a prefilled issue, never posts one');
-t('points at the repo', js.includes('github.com/kr1shnasomani/claude-token-counter/issues/new'));
+// One source of truth: package.json's `bugs` URL. A renamed account leaves a
+// redirect behind that misroutes reports if the old name is ever claimed.
+const bugs = JSON.parse(read('package.json')).bugs.url;
+t('points at the repo package.json names', js.includes(bugs + '/new'));
+t('and so do the privacy and security pages',
+	[read('PRIVACY.md'), read('SECURITY.md')].every((doc) => !/github\.com\/(?!kr7shnasomani\/)[^/\s)]+\/claude-token-counter/.test(doc)));
 t('no GitHub token anywhere', !/gh[pousr]_[A-Za-z0-9]/.test(js) && !js.includes('Authorization'));
 t('does not call the GitHub API', !js.includes('api.github.com'));
 t('opens in a new tab with noopener', js.includes("window.open(url, '_blank', 'noopener')"));
@@ -34,7 +39,7 @@ t('title and body are encoded', js.includes('encodeURIComponent'));
 t('send is disabled until something is typed', js.includes('send.disabled = !text.value.trim()'));
 
 section('the report says what it includes');
-t('note is shown to the user', html.includes('id="feedbackNote"') && js.includes('prefilled issue on GitHub'));
+t('note is shown to the user', html.includes('id="feedbackNote">Opens a prefilled issue on GitHub'));
 for (const fact of ['Extension:', 'Browser:', 'Plan:', 'Claude UI:']) {
 	t('reports ' + fact, js.includes(fact));
 }
@@ -44,40 +49,33 @@ for (const fact of ['Extension:', 'Browser:', 'Plan:', 'Claude UI:']) {
 const uiSrc = read('src/content/ui.js');
 t('UI variant names the tier that matched', ["'shape'", "'cds'", "'class'"].every((v) => uiSrc.includes(v)));
 t('and carried in the snapshot', read('src/content/main.js').includes('uiVariant: CC.uiVariant'));
+// Diagnostics have their own key: the snapshot only exists once a plan reports
+// usage, and free accounts with a broken layout never do.
+for (const line of ['Claude build:', 'Layout:', 'Shown:']) t('report carries ' + line, js.includes(line));
+t('read from its own key, not the usage snapshot', js.includes('CC.DIAG_KEY') && read('src/content/constants.js').includes("DIAG_KEY = 'cc:diag'"));
 
 section('refresh does not fake freshness');
 // On plans whose /usage returns empty windows, refresh cannot learn anything.
 // Moving the timestamp forward anyway would present an old reading as current.
-t('timestamp only moves when a window came back', js.includes('if (five || seven) {') && js.includes('current.updatedAt = Date.now();'));
+t('timestamp only moves when a window came back', js.includes('if (five || seven) current.updatedAt = Date.now();'));
 t('and says so instead', js.includes('does not report usage on demand'));
 t('existing values are kept, not blanked', js.includes("five || current?.five_hour || null"));
 
-section('plan labels are defined once, in two places that must agree');
-// The popup cannot import from the content script, so PLAN_LABELS exists twice.
-// A mismatch would have the page and the popup disagree about the plan.
-const labelsIn = (src) => {
-	const body = /PLAN_LABELS = \[(.*?)\];/s.exec(src);
-	return body ? [...body[1].matchAll(/\['(\w+)', '(\w+)'\]/g)].map((m) => m[1] + '=' + m[2]) : null;
-};
-const fromMain = labelsIn(read('src/content/main.js'));
-const fromPopup = labelsIn(js);
-t('both copies exist', Array.isArray(fromMain) && Array.isArray(fromPopup));
-t('and are identical', JSON.stringify(fromMain) === JSON.stringify(fromPopup), String(fromMain) + ' vs ' + String(fromPopup));
-t('unrecognised capabilities fall back to FREE', js.includes("match ? match[1] : 'FREE'"));
+section('plan labels are defined once, and the popup loads that definition');
+// The popup loads constants.js ahead of popup.js, so the page and the popup cannot
+// disagree about the plan: there is only one table.
+const constantsSrc = read('src/content/constants.js');
+t('popup loads constants.js first', html.indexOf('../content/constants.js') !== -1 && html.indexOf('../content/constants.js') < html.indexOf('popup.js'));
+t('the popup has no table of its own', !js.includes('PLAN_LABELS') && !js.includes('RAVEN_TYPES') && js.includes('CC.planFromOrg'));
+t('one table, in constants.js', constantsSrc.includes('PLAN_LABELS = [') && constantsSrc.includes('RAVEN_TYPES = ['));
+t('unrecognised capabilities fall back to FREE', constantsSrc.includes("match ? match[1] : 'FREE'"));
 
 // A real Team org reports exactly ["raven", "chat"], so the capability list cannot
 // separate Team from Enterprise - `raven_type` on the org object does. `claude_team`
 // sat in PLAN_LABELS for three releases and never matched anything.
-const ravenIn = (src) => {
-	const body = /RAVEN_TYPES = \[(.*?)\];/s.exec(src);
-	return body ? [...body[1].matchAll(/\['(\w+)', '(\w+)'\]/g)].map((m) => m[1] + '=' + m[2]) : null;
-};
-const ravenMain = ravenIn(read('src/content/main.js'));
-const ravenPopup = ravenIn(js);
-t('the org tier is read from raven_type', Array.isArray(ravenPopup) && ravenPopup.includes('team=TEAM'));
-t('and both copies agree', JSON.stringify(ravenMain) === JSON.stringify(ravenPopup), String(ravenMain) + ' vs ' + String(ravenPopup));
-t('no copy still claims a claude_team capability', !read('src/content/main.js').includes("['claude_team'") && !js.includes("['claude_team'"));
-t('an org tier with no name is not reported as FREE', js.includes("raven ? raven[1] : 'TEAM'"));
+t('the org tier is read from raven_type', constantsSrc.includes("['team', 'TEAM']") && constantsSrc.includes('raven_type'));
+t('no copy still claims a claude_team capability', !read('src/content/main.js').includes("['claude_team'") && !constantsSrc.includes("['claude_team'") && !js.includes("['claude_team'"));
+t('an org tier with no name is not reported as FREE', constantsSrc.includes("raven ? raven[1] : 'TEAM'"));
 
 section('the heading survives every plan name');
 // ENTERPRISE wrapped onto a second line and pushed the bars down. The heading was
@@ -104,10 +102,10 @@ t('caution below 90', js.includes("toggle('caution', pct >= 75 && pct < 90)"));
 t('warn at 90 and above', js.includes("toggle('warn', pct >= 90)"));
 t('thresholds match ui.js', read('src/content/ui.js').includes("'cc-caution', width >= 75 && width < 90") &&
 	read('src/content/ui.js').includes("'cc-warn', width >= 90"));
-t('colours match CC.COLORS', css.toLowerCase().includes('#f0b544') && css.toLowerCase().includes('#ce2029'));
-const constants = read('src/content/constants.js').toLowerCase();
-t('amber is the same value the page uses', constants.includes('#f0b544'));
-t('red is the same value the page uses', constants.includes('#ce2029'));
+const pageCss = read('src/styles.css').toLowerCase();
+t('colours match the page stylesheet', css.toLowerCase().includes('#f0b544') && css.toLowerCase().includes('#ce2029'));
+t('amber is the same value the page uses', pageCss.includes('--cc-fill-caution: #f0b544'));
+t('red is the same value the page uses', pageCss.includes('--cc-fill-warn: #ce2029'));
 t('defined in both light and dark', (css.match(/--fill-caution:/g) || []).length === 2);
 t('a stale window drops its colour', js.includes("classList.remove('caution', 'warn')"));
 
@@ -121,7 +119,7 @@ t('reports a readable name, not the raw agent', !js.includes('${navigator.userAg
 
 section('the draft survives the popup closing');
 t('draft has its own key', js.includes("DRAFT_KEY = 'cc:feedbackDraft'"));
-t('restored on open', js.includes('storageGet(storage, DRAFT_KEY)'));
+t('restored on open', js.includes('CC.storageGet(DRAFT_KEY)'));
 t('saved as you type, debounced', js.includes('saveTimer') && js.includes('storage.set({ [DRAFT_KEY]: text.value })'));
 t('cleared only once the report is sent', js.includes('storage.remove'));
 t('does not clobber text already in the box', js.includes('&& !text.value'));
