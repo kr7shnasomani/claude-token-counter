@@ -108,7 +108,7 @@ An export contains every message on the active branch, generated files in full, 
 
 ## The popup
 
-Click the toolbar icon to see the 5-hour and weekly limits and when the reading was taken. It works from any tab, not just claude.ai, because it renders a stored snapshot rather than live data. The bars use the same amber and red thresholds as the ones on the page, so a limit looks equally urgent wherever you notice it.
+Click the toolbar icon to see the 5-hour and weekly limits, plus a separate weekly bar for any model with its own allowance (Fable, on the plans that have one), and when the reading was taken. It works from any tab, not just claude.ai, because it renders a stored snapshot rather than live data. The bars use the same amber and red thresholds as the ones on the page, so a limit looks equally urgent wherever you notice it.
 
 The refresh button fetches current numbers. The first press asks for access to claude.ai; declining leaves everything else working. Nothing is requested at install time.
 
@@ -141,7 +141,7 @@ The version appears in `manifest.json` and `package.json`. CI and the release wo
 
 ## Releasing
 
-Push a `v*.*.*` tag. The workflow runs the tests and lint, checks the tag against the manifest, builds the Chrome and Firefox artifacts, verifies nothing unwanted was packaged, and publishes them with a `SHA256SUMS.txt`. Every action is pinned to a commit SHA. See [SECURITY.md](SECURITY.md) for the dependency policy.
+Bump `version` in `manifest.json` (and `package.json`) and push to `main`. If no `v<version>` tag exists yet, the workflow runs the tests and lint, creates the tag and release, builds the Chrome and Firefox artifacts, verifies nothing unwanted was packaged, and publishes them with a `SHA256SUMS.txt`. Releases are cut from `main` only, and pushing a tag by hand no longer does anything (a manual run from the Actions tab retries a failed release). Every action is pinned to a commit SHA. See [SECURITY.md](SECURITY.md) for the dependency policy.
 
 ## Credits
 

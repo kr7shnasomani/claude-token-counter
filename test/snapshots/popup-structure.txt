@@ -9,6 +9,7 @@ feedbackSend
 feedbackText
 plan
 refresh
+scopedRows
 sessionFill
 sessionRow
 sessionValue

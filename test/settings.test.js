@@ -23,7 +23,7 @@ const ctx = load('src/content/constants.js', 'src/content/ui.js');
 const ui = new ctx.ClaudeCounter.ui.CounterUI();
 ui.initialize();
 // Past the grace period the export button waits out for Claude's action group.
-ui.exportFallbackOk = true;
+ui.exportHoldUntil = 0;
 ui.setConversationMetrics({ totalTokens: 42, cachedUntil: Date.now() + 180000 });
 ui.setUsage({
 	five_hour: { utilization: 20, resets_at: new Date(Date.now() + 3e6).toISOString() },

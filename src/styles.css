@@ -285,26 +285,37 @@ html[data-mode="dark"] {
 	padding: 12px 14px;
 }
 
-.cc-popover__title {
-	margin-bottom: 6px;
+.cc-popover__row {
+	display: grid;
+	grid-template-columns: 1fr 48px 88px;
+	padding: 3px 0;
+}
+
+.cc-popover__row span:not(:first-child) {
+	text-align: right;
+	color: var(--cc-pop-muted);
+}
+
+.cc-popover__row--head {
+	margin-bottom: 3px;
 	color: var(--cc-pop-muted);
 	font-size: 13px;
 }
 
-.cc-popover__row {
-	display: flex;
-	justify-content: space-between;
-	padding: 3px 0;
+/* One figure for both plans: the cell spans the Free and Paid columns. */
+.cc-popover__row--both {
+	margin-top: 5px;
+	padding-top: 6px;
+	border-top: 1px solid var(--cc-pop-ring);
 }
 
-.cc-popover__row span:last-child {
-	color: var(--cc-pop-muted);
+.cc-popover__row--both span:last-child {
+	grid-column: 2 / 4;
+	text-align: right;
 }
 
 .cc-popover__note {
-	margin-top: 8px;
-	padding-top: 8px;
-	border-top: 1px solid var(--cc-pop-ring);
+	margin-top: 6px;
 	color: var(--cc-pop-muted);
 	font-size: 13px;
 	line-height: 18px;

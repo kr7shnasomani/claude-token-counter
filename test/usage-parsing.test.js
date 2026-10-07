@@ -85,4 +85,27 @@ t('a non-numeric utilization is rejected', rest({ five_hour: { utilization: 'lot
 t('NaN is rejected', rest({ five_hour: { utilization: NaN, resets_at: null }, seven_day: null }) === null);
 t('Infinity is rejected', rest({ five_hour: { utilization: Infinity, resets_at: null }, seven_day: null }) === null);
 
+section('per-model weekly limits (Fable on Max, Team and Enterprise)');
+// The shape is copied from a real response (2026-10-08), ids and all trimmed.
+const live = {
+	five_hour: { utilization: 26, resets_at: '2026-10-07T20:30:00.221433+00:00' },
+	seven_day: { utilization: 0, resets_at: '2026-10-14T18:00:00.221464+00:00' },
+	limits: [
+		{ kind: 'session', group: 'session', percent: 26, resets_at: '2026-10-07T20:30:00.221433+00:00', scope: null },
+		{ kind: 'weekly_all', group: 'weekly', percent: 0, resets_at: '2026-10-14T18:00:00.221464+00:00', scope: null },
+		{ kind: 'weekly_scoped', group: 'weekly', percent: 12, resets_at: '2026-10-14T18:00:00+00:00', scope: { model: { id: null, display_name: 'Fable' }, surface: null } }
+	]
+};
+const { scopedWindows } = ctx.ClaudeCounter;
+const scoped = scopedWindows(live);
+t('the Fable limit is found, and only it', scoped.length === 1 && scoped[0].label === 'Fable');
+t('with its percentage and reset', scoped[0].utilization === 12 && scoped[0].resets_at === '2026-10-14T18:00:00+00:00');
+t('an account with none has none', scopedWindows({ limits: live.limits.slice(0, 2) }).length === 0);
+t('free tier: no limits list at all', scopedWindows({}).length === 0 && scopedWindows(null).length === 0 && scopedWindows({ limits: [] }).length === 0);
+t('a scoped entry without a model name is not drawn as a nameless bar',
+	scopedWindows({ limits: [{ kind: 'weekly_scoped', percent: 5, resets_at: 'x', scope: { model: { display_name: '' }, surface: 'cli' } }] }).length === 0);
+t('a malformed percentage is skipped', scopedWindows({ limits: [{ kind: 'weekly_scoped', percent: 'lots', scope: { model: { display_name: 'Fable' } } }] }).length === 0);
+t('the REST route carries them along', rest(live).scoped?.[0]?.label === 'Fable');
+t('and says nothing when the response has no list (the SSE route never does)', rest({ five_hour: live.five_hour }).scoped === undefined);
+
 process.exit(report('usage-parsing'));

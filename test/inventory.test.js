@@ -17,7 +17,7 @@ const ui = new ctx.ClaudeCounter.ui.CounterUI();
 ui.initialize();
 // This suite is about the header placement; the grace period before the export
 // button settles there is covered in export-dock.test.js.
-ui.exportFallbackOk = true;
+ui.exportHoldUntil = 0;
 ui.setConversationMetrics({ totalTokens: 1234, cachedUntil: Date.now() + 180000 });
 ui.setUsage({
 	five_hour: { utilization: 20, resets_at: new Date(Date.now() + 3e6).toISOString() },

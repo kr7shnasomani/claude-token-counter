@@ -91,12 +91,19 @@ child of an icon-only button already there, so size, colour and hover match
 without us copying Claude's CSS; the icon is our own 18px SVG because Claude's
 are font glyphs. Claude re-renders and rearranges that group as panels open, so
 `_exportStale()` is checked from the throttled DOM observer and the button put
-back. The group is drawn after the header, so on load the button is held back
-(`EXPORT_DOCK_GRACE_MS`) rather than shown beside the counter and then jumping;
-only if no group turns up in that time, or one that was there goes away, or off
-a `/chat/` page, does it settle in the header beside the counter. Docked, it is not in `headerContainer`, so its setting and
+back. The group is drawn after the header, so the button is held back
+(`holdExport()`, `EXPORT_DOCK_GRACE_MS`) rather than shown beside the counter and
+then jumping. The hold restarts on every navigation (`handleUrlChange`) and
+whenever the group goes away, not once per page load: timed from load, any chat
+opened after four seconds flashed the button in the header (reported on 1.0.11).
+With an artifact panel open (seen 2026-10-08) Claude keeps the group but hides
+it, with only a non-icon Share button in it, so there is nothing to copy; the
+button then docks right before the header's pop-out icon
+(`[data-testid="chat-pop-out"]`, `exportAt: 'popout'`). Only if neither exists
+within the hold does it settle in the header beside the counter. A conversation with 0 tokens shows no chip, not "0 tokens". Docked, it is not in `headerContainer`, so its setting and
 "there is a conversation" rules are applied to it directly
-(`_syncExportVisibility`). `test/export-dock.test.js` covers it; whether it
+(`_syncExportVisibility`). A button that has already settled in the header is left there on later redraws, and moving between the two docking spots re-borrows the new neighbour's look.
+`test/export-dock.test.js` covers it; whether it
 actually looks right needs a real page.
 
 **Colours live in the stylesheet, not in script.** `styles.css` defines the
@@ -128,11 +135,29 @@ Claude's tooltip colours are the CSS variables `--cds-tooltip-bg`/`-fg`, which
 is followed for free. The popup's `[data-tip]` labels use the same spec.
 Re-measure when Claude changes it: open its "+" menu and hover a sidebar button.
 
+**The context sizes in the popover are sourced, not remembered.** They are by
+family (the newest version of each) and were checked on 2026-10-07 against
+Anthropic's help article "How large is the context window on paid Claude plans?"
+and claude.com/pricing: Fable, Opus and Sonnet 1M, Haiku 200K, older versions
+200K-500K by version. Free has Sonnet and Haiku only, with the same windows as
+paid; the article itself covers paid plans only, so the Free column rests on the
+pricing page. A third-party claim of "Free = 200K" and the extension's own earlier
+"Free plan: 200K" are not supported by either. Re-check when a model ships.
+
 A tooltip that offers an action (the token counter's "Click for details") is
 interactive: it stays while the pointer is on it (`TOOLTIP_GRACE_MS` to cross the
 gap) and clicking it opens the popover. It was not at first, and a user reaching
 for the cue found it gone. Do not give a tooltip a "click" cue without that.
 `test/tooltip.test.js` fires real events at the real UI.
+
+**A chat with no count is read again, a few times.** A new chat is read the moment
+its first message is sent, before the server has it, and an empty read showed
+"0 tokens" that stayed (reported on 1.0.11, in a case where the reply-end signal
+was apparently also missed). `main.js` `tick()` re-reads a conversation that has
+produced no count every `EMPTY_REFRESH_MS`, up to `EMPTY_REFRESH_MAX` times, reset
+on navigation and on a reply's end; a count of 0 is not shown at all.
+`test/empty-refresh.test.js` covers it. The root cause (a missed end-of-reply signal
+on that layout) was not reproduced, so this is a net under it, not a diagnosis.
 
 **A requested conversation is answered once.** The bridge returns a fetched
 conversation in the response only; `main.js` `fetchConversation` feeds it to the
@@ -215,6 +240,18 @@ only early in an over-long window — later readings look ordinary while the
 marker they imply is badly out of place. The latch is in memory, so it is
 re-learned per page load. Do not "simplify" this into an unconditional
 `resets_at - 5h`; that is what it is deliberately not.
+
+**Per-model weekly limits come from the `limits` list, and only reach the popup.**
+Max, Team and Enterprise accounts get a separate Fable allowance. It is not a
+named field of the usage response (`seven_day_*` stayed null for it); it is an
+entry `{kind: 'weekly_scoped', percent, resets_at, scope: {model: {display_name:
+'Fable'}}}` in `limits`, taken from a real response on 2026-10-08. `CC.scopedWindows`
+reads them, `parseUsageFromUsageEndpoint` carries them, the snapshot stores them
+as `scoped`, and the popup draws one bar each. A usage reading that came from the
+message stream carries none, so the last known ones are kept. The on-page row does
+not show them (not asked for; add it on purpose). `test/scoped-limits.test.js` runs the real content script and popup against it. A scoped entry whose
+`display_name` is empty is skipped rather than drawn nameless. Other scope kinds
+(`surface`) are ignored until one is seen on a real response.
 
 **The popup's bars deliberately have no elapsed-time marker.** The page row and
 the popup are not meant to match here. The marker answers "am I burning quota

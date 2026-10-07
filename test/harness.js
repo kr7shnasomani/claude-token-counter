@@ -36,6 +36,7 @@ class El {
 	}
 	get className() { return [...this.classList._s].join(' '); }
 	appendChild(c) { this._text = null; c.parentElement = this; this.children.push(c); return c; }
+	append(...c) { for (const x of c) this.appendChild(x); }
 	prepend(c) { this._text = null; c.parentElement = this; this.children.unshift(c); }
 	replaceChildren(...c) { this._text = null; for (const x of c) x.parentElement = this; this.children = c; }
 	remove() {
@@ -44,6 +45,18 @@ class El {
 		this.parentElement = null;
 	}
 	get firstElementChild() { return this.children[0] || null; }
+	get nextElementSibling() {
+		const sibs = this.parentElement ? this.parentElement.children : [];
+		return sibs[sibs.indexOf(this) + 1] || null;
+	}
+	insertBefore(c, ref) {
+		if (c.parentElement) c.remove();
+		this._text = null;
+		c.parentElement = this;
+		const i = ref ? this.children.indexOf(ref) : -1;
+		if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
+		return c;
+	}
 	cloneNode() { const c = new El(this.tag); c.className = this.className; return c; }
 	setAttribute(k, v) { this.attrs[k] = v; }
 	getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }

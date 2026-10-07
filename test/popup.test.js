@@ -17,6 +17,11 @@ for (const id of ['content', 'settings', 'feedback']) {
 t('switcher handles all three', ['usage', 'settings', 'feedback'].every((p) => js.includes(`${p}:`) || js.includes(`'${p}'`)));
 t('clicking an open panel returns to usage', js.includes('togglePanel'));
 
+section('per-model weekly limits get their own bars');
+t('there is a place for them', html.includes('id="scopedRows"'));
+t('built with textContent, one row per limit', js.includes('renderScoped') && js.includes('`${win.label} weekly limit`'));
+t('refresh keeps what it has when the response lists no limits', js.includes('Array.isArray(raw?.limits)'));
+
 section('action icons');
 for (const [id, tip] of [['refresh', 'Refresh'], ['settingsBtn', 'Settings'], ['feedbackBtn', 'Send feedback']]) {
 	t(`${id} has hover label "${tip}"`, html.includes(`id="${id}"`) && html.includes(`data-tip="${tip}"`));

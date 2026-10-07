@@ -55,6 +55,26 @@
 		return true;
 	}
 
+	/** One bar per model-specific weekly limit (Fable, on the plans that have one). */
+	function renderScoped(list) {
+		const host = document.getElementById('scopedRows');
+		const rows = (Array.isArray(list) ? list : []).map((win) => {
+			const el = (tag, className) => Object.assign(document.createElement(tag), { className });
+			const row = el('section', 'row');
+			const head = el('div', 'row__head');
+			const label = el('span', 'row__label');
+			label.textContent = `${win.label} weekly limit`;
+			const value = el('span', 'row__value');
+			const fill = el('div', 'fill');
+			const track = el('div', 'track');
+			track.appendChild(fill);
+			head.append(label, value);
+			row.append(head, track);
+			return renderWindow(win, value, fill) ? row : null;
+		});
+		host.replaceChildren(...rows.filter(Boolean));
+	}
+
 	function render(snapshot) {
 		const empty = document.getElementById('empty');
 		const content = document.getElementById('content');
@@ -79,6 +99,7 @@
 		);
 		document.getElementById('sessionRow').hidden = !hasSession;
 		document.getElementById('weeklyRow').hidden = !hasWeekly;
+		renderScoped(snapshot.scoped);
 
 		// Some plans report no windows at all until the first message of a session.
 		// A bare "Hourly limit" label above an empty bar looks broken; say there is
@@ -163,6 +184,10 @@
 				five_hour: five || current?.five_hour || null,
 				seven_day: seven || current?.seven_day || null
 			};
+			// A response that lists limits is the whole story, so an account that no
+			// longer has a per-model one loses its bar; one that does not list any
+			// (free) leaves what was stored.
+			if (Array.isArray(raw?.limits)) current.scoped = CC.scopedWindows(raw);
 
 			// Only restamp the reading when the response actually carried one. Free
 			// plans answer with empty windows, and moving the timestamp forward there

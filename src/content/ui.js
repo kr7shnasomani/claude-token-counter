@@ -34,7 +34,21 @@
 	}
 
 	// Shown in the token counter's popover. Product facts, so they sit in one place.
-	const CONTEXT_SIZES = [['Sonnet 5', '1M'], ['Opus 4.8', '500K'], ['Other models', '200K']];
+	// Context window in the Claude app, by family so a new release does not date
+	// it. Checked 2026-10-07 against Anthropic's help article "How large is the
+	// context window on paid Claude plans?" (paid plans: Fable 5.1, Opus 5.5/5 and
+	// Sonnet 5.5/5 are 1M; Fable 5, Opus 4.x and Sonnet 4.6 are 500K; anything else,
+	// Haiku included, 200K) and claude.com/pricing (Free has Sonnet and Haiku, not
+	// Fable or Opus, and the same window as paid). The figures are the newest
+	// version of each family. [family, free, paid]; a dash is "not on that plan".
+	const CONTEXT_SIZES = [
+		['Fable', '\u2014', '1M'],
+		['Opus', '\u2014', '1M'],
+		['Sonnet', '1M', '1M'],
+		['Haiku', '200K', '200K']
+	];
+	// Older versions (Free keeps some) differ by version, not plan, so they get one line.
+	const OLDER_MODELS_SIZE = '200K\u2013500K';
 
 	// One tooltip for the whole UI, drawn to Claude's own tooltip spec (see
 	// styles.css), so hovering anything we add looks like hovering anything of theirs.
@@ -277,13 +291,17 @@
 			// True while the button sits in Claude's top-right action group, wearing
 			// the classes it borrowed from a neighbouring icon button.
 			this.exportDocked = false;
+			this.exportTier = null;
 			this.nativeExportClasses = [];
 			// The action group is drawn after the header, so for the first moments of a
-			// page there is nowhere to dock yet. Showing the button beside the counter in
+			// chat there is nowhere to dock yet. Showing the button beside the counter in
 			// the meantime made it flash there before jumping to its real place; it is
-			// held back, and only shown in the header once no group has turned up.
-			this.createdAt = Date.now();
-			this.exportFallbackOk = false;
+			// held back until this time, and only shown in the header if no group has
+			// turned up by then. Restarted on every navigation and whenever the group
+			// goes away (see holdExport), not just once per page load: the first version
+			// timed it from load, so any chat opened after four seconds got the flash.
+			this.exportHoldUntil = 0;
+			this.holdExport();
 			this.exportingChat = false;
 
 			this.headerContainer = null;
@@ -590,14 +608,15 @@
 			pop.setAttribute('role', 'dialog');
 			pop.setAttribute('aria-label', 'Context window');
 			const line = (className, text) => Object.assign(document.createElement('div'), { className, textContent: text });
-			pop.appendChild(line('cc-popover__title', 'Max context \u00B7 paid plans'));
-			for (const [model, size] of CONTEXT_SIZES) {
-				const row = line('cc-popover__row', '');
-				row.appendChild(Object.assign(document.createElement('span'), { textContent: model }));
-				row.appendChild(Object.assign(document.createElement('span'), { textContent: size }));
+			const addRow = (className, cells) => {
+				const row = line('cc-popover__row ' + className, '');
+				for (const text of cells) row.appendChild(Object.assign(document.createElement('span'), { textContent: text }));
 				pop.appendChild(row);
-			}
-			pop.appendChild(line('cc-popover__note', 'Free plan: 200K, Haiku and Sonnet only. The count no longer applies after context compaction.'));
+			};
+			addRow('cc-popover__row--head', ['Context window', 'Free', 'Paid']);
+			for (const cells of CONTEXT_SIZES) addRow('', cells);
+			addRow('cc-popover__row--both', ['Older models', OLDER_MODELS_SIZE]);
+			pop.appendChild(line('cc-popover__note', 'Figures are for the newest version of each model; older ones are the same on Free and Paid. The count no longer applies after context compaction.'));
 			document.body.appendChild(pop);
 			this.contextPopover = pop;
 
@@ -709,9 +728,18 @@
 		_actionsTarget() {
 			if (!/\/chat\//.test(window.location.pathname)) return null;
 			const host = document.querySelector(CC.DOM.ACTIONS_HOST);
-			if (!host) return null;
-			const ref = [...host.querySelectorAll(CC.DOM.ACTIONS_ICON_BUTTON)].find((b) => b !== this.exportBtn);
-			return ref ? { host, ref } : null;
+			const ref = host && [...host.querySelectorAll(CC.DOM.ACTIONS_ICON_BUTTON)].find((b) => b !== this.exportBtn);
+			if (ref) return { host, ref, tier: 'actions', before: host.firstElementChild === this.exportBtn ? this.exportBtn : host.firstElementChild };
+			// An artifact panel takes Claude's Share button away (the group stays, hidden
+			// and with nothing to copy). The header's pop-out icon is still there.
+			const popOut = document.querySelector(CC.DOM.POP_OUT_BUTTON);
+			if (popOut?.parentElement) return { host: popOut.parentElement, ref: popOut, tier: 'popout', before: popOut };
+			return null;
+		}
+
+		/** Keep the export button out of the header for a while longer; see the constructor. */
+		holdExport() {
+			this.exportHoldUntil = Date.now() + CC.CONST.EXPORT_DOCK_GRACE_MS;
 		}
 
 		/** Is the export button where it should be? Cheap enough for the throttled observer. */
@@ -719,7 +747,8 @@
 			if (!this.exportBtn) return false;
 			const target = this._actionsTarget();
 			if (!target) return this.exportDocked;
-			return !this.exportDocked || this.exportBtn.parentElement !== target.host;
+			return !this.exportDocked || this.exportBtn.parentElement !== target.host ||
+				(target.tier === 'popout' && this.exportBtn.nextElementSibling !== target.before);
 		}
 
 		/**
@@ -736,10 +765,16 @@
 				if (this.exportDocked) this._undockExport();
 				return;
 			}
-			if (!this.exportDocked) this._dockExport(target.ref);
-			// Left of the page icon: first in the group. Only touch the DOM when it is
-			// not already so, or the observer would chase its own tail.
-			if (btn.parentElement !== target.host || target.host.firstElementChild !== btn) target.host.prepend(btn);
+			// Re-borrow the look when the target kind changes (artifact panel opened or
+			// closed): the two neighbours are not guaranteed to be styled alike.
+			if (!this.exportDocked || this.exportTier !== target.tier) this._dockExport(target.ref);
+			this.exportTier = target.tier;
+			// Left of the page icon (first in the group), or right before the pop-out
+			// icon. Only touch the DOM when it is not already so, or the observer
+			// would chase its own tail.
+			const placed = btn.parentElement === target.host &&
+				(target.tier === 'popout' ? btn.nextElementSibling === target.before : target.host.firstElementChild === btn);
+			if (!placed) target.host.insertBefore(btn, target.before);
 			this._syncExportVisibility();
 		}
 
@@ -748,6 +783,7 @@
 			for (const name of ['data-cds', 'data-cds-icon-only', 'data-cds-ghost', 'data-size']) {
 				if (ref.hasAttribute(name)) btn.setAttribute(name, ref.getAttribute(name));
 			}
+			btn.classList.remove(...this.nativeExportClasses);
 			this.nativeExportClasses = String(ref.className).split(/\s+/).filter(Boolean);
 			btn.classList.remove('cc-exportBtn');
 			btn.classList.add('cc-exportBtn--docked', ...this.nativeExportClasses);
@@ -776,8 +812,9 @@
 			this.exportIcon.setAttribute('height', '11');
 			this.exportIcon.setAttribute('stroke-width', '2.2');
 			this.exportDocked = false;
-			// A group that was there and has gone: no reason to hold the button back.
-			this.exportFallbackOk = true;
+			// A group that has gone may be a re-render about to bring it back; hold the
+			// button back for the same grace rather than flash it in the header.
+			this.holdExport();
 			// Docked, visibility was set on the button itself. Back in the header the
 			// container decides, and a leftover hide would never be lifted.
 			btn.classList.remove('cc-hidden');
@@ -807,8 +844,8 @@
 		 * that is not a failure.
 		 */
 		_ensureShown() {
-			if (!this.exportFallbackOk && !this.exportDocked && Date.now() - this.createdAt > CC.CONST.EXPORT_DOCK_GRACE_MS) {
-				this.exportFallbackOk = true;
+			if (this.exportHoldUntil && !this.exportDocked && Date.now() >= this.exportHoldUntil) {
+				this.exportHoldUntil = 0;
 				this._renderHeader();
 			}
 			this._keepSeen('header', this.headerContainer, this.headerContainer.children.length > 0);
@@ -859,7 +896,7 @@
 				timer: shown(this.cacheTimeSpan),
 				usageRow: shown(this.usageLine),
 				exportBtn: shown(this.exportBtn),
-				exportAt: this.exportDocked ? 'actions' : 'header',
+				exportAt: this.exportDocked ? this.exportTier : 'header',
 				floating: [['header', this.headerContainer], ['usage', this.usageLine]]
 					.filter(([, el]) => el?.classList.contains('cc-floating')).map(([k]) => k),
 				// A hidden element is not a broken one; say which the user turned off.
@@ -987,7 +1024,9 @@
 			clearTimeout(this.pendingCacheTimeoutId);
 			this.pendingCacheTimeoutId = null;
 
-			if (typeof totalTokens !== 'number') {
+			// An empty conversation (a new chat the moment its first message is sent,
+			// before the server has it) has nothing to count; "0 tokens" read as broken.
+			if (typeof totalTokens !== 'number' || totalTokens === 0) {
 				this.lengthDisplay.textContent = '';
 				this.lengthValueSpan = null;
 				this._clearCache();
@@ -1016,6 +1055,9 @@
 		}
 
 		_renderHeader() {
+			// A button that has already settled in the header stays there: the hold exists
+			// to stop it appearing there first, not to take it away again on every redraw.
+			const settled = this.exportBtn?.parentElement === this.headerContainer;
 			this.headerContainer.replaceChildren();
 			this._syncExportVisibility();
 			if (!this.lengthDisplay.textContent) return;
@@ -1037,7 +1079,7 @@
 				this.headerContainer.appendChild(this.headerDisplay);
 			}
 
-			if (exportButton && this.exportBtn && !this.exportDocked && this.exportFallbackOk) this.headerContainer.appendChild(this.exportBtn);
+			if (exportButton && this.exportBtn && !this.exportDocked && (settled || Date.now() >= this.exportHoldUntil)) this.headerContainer.appendChild(this.exportBtn);
 		}
 
 		setUsage(usage) {

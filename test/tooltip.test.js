@@ -125,9 +125,15 @@ const touch = { pointerType: 'touch' };
 		t('a click opens it', !closed() && stop.called);
 		t('  and says so for assistive tech', ui.lengthGroup.getAttribute('aria-expanded') === 'true');
 		const text = pop.textContent;
-		t('lists every model size the old tooltip did',
-			['Sonnet 5', '1M', 'Opus 4.8', '500K', 'Other models', '200K'].every((x) => text.includes(x)), text);
-		t('keeps the free-plan and compaction notes', /Free plan: 200K/.test(text) && /compaction/.test(text));
+		const rows = pop.children.map((r) => r.children.map((c) => c.textContent));
+		const row = (name) => rows.find((r) => r[0] === name);
+		t('names families, not versions', ['Fable', 'Opus', 'Sonnet', 'Haiku'].every((m) => row(m)) && !/\d\.\d/.test(text.replace(/\u2013/g, '')), text);
+		t('free and paid sit side by side under their own headings', rows[0].join('|') === 'Context window|Free|Paid');
+		t('Sonnet: 1M on both', row('Sonnet').join('|') === 'Sonnet|1M|1M');
+		t('Haiku: 200K either way', row('Haiku').join('|') === 'Haiku|200K|200K');
+		t('Opus and Fable are paid only', row('Opus')[1] === '\u2014' && row('Opus')[2] === '1M' && row('Fable')[1] === '\u2014' && row('Fable')[2] === '1M');
+		t('older models are one line for both plans', row('Older models').length === 2 && /500K/.test(row('Older models')[1]) && /same on Free and Paid/.test(text) && /newest version/.test(text));
+		t('the compaction note is last, and the free-plan sentence is gone', /compaction/.test(pop.children[pop.children.length - 1].textContent) && !/Free plan:/.test(text));
 		t('is labelled for screen readers', pop.getAttribute('role') === 'dialog' && !!pop.getAttribute('aria-label'));
 
 		ui.lengthGroup.fire('click', { stopPropagation() {} });

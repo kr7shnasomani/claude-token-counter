@@ -11,6 +11,10 @@
 		// docks here and borrows the look of an icon button already in it.
 		ACTIONS_HOST: '[data-testid="wiggle-controls-actions"]',
 		ACTIONS_ICON_BUTTON: 'button[data-cds="Button"][data-cds-icon-only]',
+		// With an artifact panel open Claude hides the action group's Share button
+		// and leaves that group with nothing to copy, but the chat header still has
+		// this icon button on its right. The export button docks beside it instead.
+		POP_OUT_BUTTON: '[data-testid="chat-pop-out"]',
 		// Set by the page itself on a reply that is still being written. Present on
 		// layouts that send over their own RPC rather than a /completion stream.
 		STREAMING: '[data-is-streaming="true"]',
@@ -90,6 +94,21 @@
 		return { utilization, resets_at };
 	};
 
+	/**
+	 * Weekly limits that apply to one model rather than the account, from the
+	 * `limits` list of the usage response: Max, Team and Enterprise accounts get a
+	 * separate Fable allowance, shown as its own bar. Observed on a real response
+	 * (2026-10-08): `{ kind: 'weekly_scoped', percent, resets_at,
+	 * scope: { model: { display_name: 'Fable' } } }`. Accounts without one send no
+	 * such entry, so this is simply empty for them.
+	 */
+	CC.scopedWindows = (raw) => (Array.isArray(raw?.limits) ? raw.limits : []).flatMap((entry) => {
+		const label = entry?.scope?.model?.display_name;
+		if (entry?.kind !== 'weekly_scoped' || typeof label !== 'string' || !label.trim()) return [];
+		const win = CC.usageWindow({ utilization: entry.percent, resets_at: entry.resets_at });
+		return win ? [{ label: label.trim().slice(0, 24), ...win }] : [];
+	});
+
 	// The last few errors the extension swallowed, for bug reports. Plain strings,
 	// never page content.
 	const recentErrors = [];
@@ -122,6 +141,10 @@
 		// How long to wait before re-reading a conversation whose tree did not yet
 		// include the reply when its stream closed.
 		REPLY_SETTLE_RETRY_MS: 1500,
+		// A chat that has produced no count yet is looked at again this often, this many
+		// times, rather than left blank (see main.js tick).
+		EMPTY_REFRESH_MS: 5000,
+		EMPTY_REFRESH_MAX: 6,
 		// Nominal window lengths, taken from the names the server itself gives the
 		// windows (`five_hour`/`seven_day` over REST, `5h`/`7d` over SSE). Nothing
 		// in either payload states a duration, so these are the only figures

@@ -1,17 +1,62 @@
 name: Build and Release Extension
 
+# Bumping "version" in manifest.json on main is the release: this creates the
+# v<version> tag and the GitHub release. Pushes that touch manifest.json without
+# changing the version (a permission edit, say) find the tag already there and stop.
+# Run it by hand (from main) to retry a release that failed part-way (it updates
+# the existing one). Pushing a v*.*.* tag by hand no longer does anything.
 on:
   push:
-    tags:
-      - "v*.*.*" # Trigger on version tags like v1.0.0
+    branches: ["main"]
+    paths: ["manifest.json"]
+  workflow_dispatch:
+
+# Two quick pushes must not race to create the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 # Default to read-only; the release job opts into what it needs.
 permissions:
   contents: read
 
 jobs:
+  check:
+    name: Is this a new version?
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: version
+        run: |
+          set -euo pipefail
+          # A manual run can be started from any branch; releases come from main only.
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases are cut from main, not $GITHUB_REF"
+            exit 1
+          fi
+          VERSION=$(jq -r .version manifest.json)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::manifest version '$VERSION' is not MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] &&
+             git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TAG already exists, nothing to release"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   verify:
     name: Verify before publishing
+    needs: check
+    if: needs.check.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,30 +70,20 @@ jobs:
       # independent of any local npm configuration.
       - run: npm ci --ignore-scripts
 
-      # A tag is public the moment it is pushed, so everything that can fail
-      # should fail here rather than after artifacts are attached.
+      # The tag is public the moment the release is created, so everything that
+      # can fail should fail here rather than after artifacts are attached.
+      # (npm test also checks manifest.json and package.json agree.)
       - run: npm test
       - run: npx eslint .
 
-      - name: Tag matches the version being shipped
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
-          MANIFEST=$(jq -r .version manifest.json)
-          echo "tag=$TAG manifest=$MANIFEST"
-          if [ "$TAG" != "$MANIFEST" ]; then
-            echo "::error::Tag $TAG does not match manifest ($MANIFEST)"
-            exit 1
-          fi
-
-
   build-and-release:
     name: Build and publish
-    needs: verify
+    needs: [check, verify]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # only this job writes, and only to create the release
+      contents: write # only this job writes: it creates the tag and the release
     env:
+      TAG: ${{ needs.check.outputs.tag }}
       # Exposed at job level so the upload step's `if` can test for it.
       CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
 
@@ -58,7 +93,7 @@ jobs:
       - name: Build Artifacts
         run: |
           set -euo pipefail
-          VERSION_TAG=${GITHUB_REF_NAME}
+          VERSION_TAG=${TAG}
 
           # 1. Chrome / Edge: strip the Firefox-only block to avoid store warnings
           mkdir -p dist/chrome
@@ -75,7 +110,7 @@ jobs:
       - name: Check the artifacts are sane
         run: |
           set -euo pipefail
-          VERSION_TAG=${GITHUB_REF_NAME}
+          VERSION_TAG=${TAG}
           for f in claude-token-counter-chrome-${VERSION_TAG}.zip \
                    claude-token-counter-firefox-${VERSION_TAG}.zip; do
             test -s "$f" || { echo "::error::$f is missing or empty"; exit 1; }
@@ -98,6 +133,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          tag_name: ${{ needs.check.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: |
             claude-token-counter-chrome-*.zip
             claude-token-counter-firefox-*.zip
@@ -117,7 +154,7 @@ jobs:
         if: env.CWS_CLIENT_ID != ''
         run: |
           set -euo pipefail
-          ZIP="claude-token-counter-chrome-${GITHUB_REF_NAME}.zip"
+          ZIP="claude-token-counter-chrome-${TAG}.zip"
 
           ACCESS_TOKEN=$(curl -sS --fail-with-body -X POST \
             https://oauth2.googleapis.com/token \

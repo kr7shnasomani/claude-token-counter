@@ -45,7 +45,10 @@
 	}
 
 	function parseUsageFromUsageEndpoint(raw) {
-		return raw && typeof raw === 'object' ? parseUsage(raw.five_hour, raw.seven_day, false) : null;
+		const parsed = raw && typeof raw === 'object' ? parseUsage(raw.five_hour, raw.seven_day, false) : null;
+		// Per-model weekly limits ride along for the popup; the page row ignores them.
+		if (parsed && Array.isArray(raw.limits)) parsed.scoped = CC.scopedWindows(raw);
+		return parsed;
 	}
 
 	function parseUsageFromMessageLimit(raw) {
@@ -155,9 +158,14 @@
 		return planLabel;
 	}
 
+	// The message stream carries no per-model limits, so a reading that came from it
+	// keeps the last ones the usage endpoint gave rather than wiping them.
+	let lastScoped = [];
+
 	async function persistSnapshot(windows) {
 		const storage = CC.getStorage();
 		if (!storage || !windows) return;
+		if (windows.scoped) lastScoped = windows.scoped;
 		const plan = await resolvePlanLabel();
 		try {
 			await storage.set({
@@ -167,7 +175,8 @@
 					plan,
 					uiVariant: CC.uiVariant || null,
 					five_hour: windows.five_hour,
-					seven_day: windows.seven_day
+					seven_day: windows.seven_day,
+					scoped: lastScoped
 				}
 			});
 		} catch (e) {
@@ -218,6 +227,9 @@
 		const items = await CC.storageGet(CC.SNAPSHOT_KEY);
 		const snapshot = items?.[CC.SNAPSHOT_KEY];
 		if (!snapshot || usageState) return;
+		// Per-model limits are only ever read from the usage endpoint; keep the last
+		// ones so a reading from the message stream does not overwrite them with none.
+		if (Array.isArray(snapshot.scoped)) lastScoped = snapshot.scoped;
 
 		// A window whose reset has passed is not stale data waiting to be refreshed:
 		// there is no active window at all until the next message, and its true figure
@@ -288,6 +300,7 @@
 		if (!currentConversationId) return;
 		if (conversationId && conversationId !== currentConversationId) return;
 		lastGenerationEndMs = Date.now();
+		emptyRefreshes = 0;
 
 		const data = await refreshConversation();
 		// The stream can close a moment before the reply is readable from the tree.
@@ -340,12 +353,21 @@
 		});
 	}
 
+	// Has the open conversation produced a count yet? A new chat is read the moment
+	// its first message is sent, before the server has it; if that read is empty and
+	// the end of the reply is then missed, nothing would ask again. tick() re-reads a
+	// chat that still has no count, a few times, so it can never stay blank.
+	let countSeen = false;
+	let emptyRefreshes = 0;
+	let lastEmptyRefreshMs = Date.now();
+
 	async function handleConversationPayload({ orgId, conversationId, data }) {
 		if (!conversationId || conversationId !== currentConversationId) return;
 		updateOrgIdIfNeeded(orgId);
 		if (!data) return;
 
 		const metrics = await CC.tokens.computeConversationMetrics(data);
+		if (metrics.totalTokens > 0) countSeen = true;
 		ui.setConversationMetrics({ totalTokens: metrics.totalTokens, cachedUntil: metrics.cachedUntil });
 	}
 
@@ -372,7 +394,16 @@
 	CC.bridge.on('cc:message_limit', handleMessageLimit);
 
 	async function handleUrlChange() {
+		const previous = currentConversationId;
 		currentConversationId = getConversationId();
+		if (currentConversationId !== previous) {
+			countSeen = false;
+			emptyRefreshes = 0;
+			lastEmptyRefreshMs = Date.now(); // the read this navigation makes counts as the first
+		}
+		// A new page redraws Claude's header; keep the export button from flashing in
+		// ours while its own group is drawn.
+		ui.holdExport();
 
 		// Attach the usage line and the header independently - they have different
 		// anchors, and the header does not exist on home/new pages. Each does nothing
@@ -478,9 +509,17 @@
 			if (ticks++ % 5 === 0) publishDiagnostics();
 		}
 
-		// Refresh usage when a window ends (5h / 7d). SSE won't fire at rollover unless a message is sent.
 		const now = Date.now();
 
+		// A chat with no count yet is read again (see countSeen).
+		if (!document.hidden && currentConversationId && !countSeen && emptyRefreshes < CC.CONST.EMPTY_REFRESH_MAX &&
+			now - lastEmptyRefreshMs >= CC.CONST.EMPTY_REFRESH_MS) {
+			lastEmptyRefreshMs = now;
+			emptyRefreshes++;
+			refreshConversation();
+		}
+
+		// Refresh usage when a window ends (5h / 7d). SSE won't fire at rollover unless a message is sent.
 		for (const key of ['five_hour', 'seven_day']) {
 			const resetMs = usageResetMs[key];
 			if (resetMs && now >= resetMs && rolloverHandledForResetMs[key] !== resetMs) {
