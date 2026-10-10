@@ -45,7 +45,12 @@
 	<div class="chat-header">
 		<div data-testid="chat-title-split" class="title">Greeting <span class="chev">&#9662;</span></div>
 		<span class="grow"></span>
-		<button class="share">Share</button>
+		<!-- Claude's top-right controls. The export button sits right before this
+		     group, in our own docked look; the page path here is not a chat, so the
+		     script below places it by hand. Hover it, and flip data-mode. -->
+		<div data-testid="wiggle-controls-actions" style="display:flex; gap:4px;">
+			<button class="share">Share</button>
+		</div>
 	</div>
 </section>
 
@@ -101,6 +106,10 @@
 		ui.initialize();
 		ui.setConversationMetrics({ totalTokens: 18, cachedUntil: Date.now() + 136000 });
 		ui.attachHeader();
+		// Only the look: marked as docked for real, the UI's own observer would see
+		// a non-chat path and take the button away again.
+		ui.exportBtn.classList.add('cc-exportBtn--docked');
+		document.querySelector('[data-testid="wiggle-controls-actions"]').before(ui.exportBtn);
 		window.__ccResults.push({ label: 'header', variant: ui.headerTier, ui });
 		return;
 	}

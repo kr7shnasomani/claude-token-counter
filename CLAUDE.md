@@ -25,15 +25,20 @@ extension is split:
 
 - `src/injected/bridge.js` runs in the **page's own world**. It is injected as a
   `<script src>` by `bridge-client.js` and patches `window.fetch` and
-  `history.pushState`/`replaceState` before the app loads. It sees every request
-  claude.ai makes, including the SSE stream.
+  `history.pushState`/`replaceState`. The manifest sets no `run_at`, so this happens
+  at document idle, after the app has started: it sees every request claude.ai makes
+  from then on, including the SSE stream, and `handleUrlChange` fetches the first
+  conversation itself rather than rely on having seen the page's own load.
 - `src/content/*.js` runs in the **isolated content script world** and owns all
   UI.
 
 They cannot call each other. The only channel is `window.postMessage`, tagged
 `cc: 'ClaudeCounter'`, matched by request id for request/response and broadcast
-for one-way events. Both sides check `event.source === window` and the origin,
-and the bridge addresses replies to `window.location.origin` rather than `'*'`.
+for one-way events. Both sides check `event.source === window`; the content script
+also checks the origin, and the bridge addresses replies to `window.location.origin`
+rather than `'*'`. The bridge answers an HTTP error as a failed request, never as
+data (`getJson`): a 429 or 401 still carries JSON, and read as data it was an empty
+export, a "no usage" account and a `FREE` plan.
 Ids that end up in a URL path are validated against `ID_PATTERN` first.
 
 ## Things that are not obvious and will bite
@@ -81,36 +86,41 @@ has not been painted for three ticks is lifted onto `document.body` and floated
 as a pill (`.cc-floating`), and tried in its real place again every 30 seconds
 (no flicker: a floating part is excluded from the faster re-attach checks). It
 never floats on a guess: with no layout to ask (`getClientRects` absent, as in
-the test shim) a part counts as painted. Reports list what floated.
+the test shim) a part counts as painted. It floats only where there is a chat (a
+`/chat/` path or a chat input on the page): sign-in, settings and the like have no
+composer because they are not chats, and the usage pill used to appear over them
+(seen on `/oauth/authorize`); a floating part is taken down on leaving for one. Reports list what floated.
 `test/always-shown.test.js` covers it.
 
-**The export button docks into Claude's own action group.** In a chat it is
-moved to be the first child of `[data-testid="wiggle-controls-actions"]` (left
-of the page icon) and takes the classes, design-system attributes and paint
-child of an icon-only button already there, so size, colour and hover match
-without us copying Claude's CSS; the icon is our own 18px SVG because Claude's
-are font glyphs. Claude re-renders and rearranges that group as panels open, so
-`_exportStale()` is checked from the throttled DOM observer and the button put
-back. The group is drawn after the header, so the button is held back
-(`holdExport()`, `EXPORT_DOCK_GRACE_MS`) rather than shown beside the counter and
-then jumping. The hold restarts on every navigation (`handleUrlChange`) and
-whenever the group goes away, not once per page load: timed from load, any chat
-opened after four seconds flashed the button in the header (reported on 1.0.11).
-With an artifact panel open (seen 2026-10-08) Claude keeps the group but hides
-it, with only a non-icon Share button in it, so there is nothing to copy; the
-button then docks right before the header's pop-out icon
-(`[data-testid="chat-pop-out"]`, `exportAt: 'popout'`). Only if neither exists
-within the hold does it settle in the header beside the counter. A conversation with 0 tokens shows no chip, not "0 tokens". Docked, it is not in `headerContainer`, so its setting and
-"there is a conversation" rules are applied to it directly
-(`_syncExportVisibility`). A button that has already settled in the header is left there on later redraws, and moving between the two docking spots re-borrows the new neighbour's look.
-`test/export-dock.test.js` covers it; whether it
-actually looks right needs a real page.
+**The export button sits beside Claude's top-right controls, never inside them.**
+It is our own element, in our own look (a quiet 32px icon button, `.cc-exportBtn--docked`),
+inserted as a *sibling* right before `[data-testid="wiggle-controls-actions"]`. An earlier
+design moved it into that group wearing the classes of an icon button already there; Claude
+draws the group differently in every layout (icon buttons; an artifact panel hiding it with
+only Share inside; a task-style "Step 5 of 6" chat with only a text Share button), so each
+layout meant a new rule and, in the last, a Share-shaped box wedged between Claude's own.
+Do not borrow Claude's classes or enter its groups again. With an artifact panel open
+(seen 2026-10-08) the group is hidden, so the button goes right before the header's pop-out
+icon (`[data-testid="chat-pop-out"]`, `exportAt: 'popout'`). Claude re-renders that area as
+panels open, so `_exportStale()` is checked from the throttled DOM observer and the button put
+back. The controls are drawn after the header, so the button is held back (`holdExport()`,
+`EXPORT_DOCK_GRACE_MS`) rather than shown beside the counter and then jumping. The hold
+restarts on every navigation (`handleUrlChange`) and whenever the controls go away, not once
+per page load: timed from load, any chat opened after four seconds flashed the button in the
+header (reported on 1.0.11). Only if neither anchor exists within the hold does it settle in
+the header beside the counter, and a button that has settled there is left there on later
+redraws. A conversation with 0 tokens shows no chip, not "0 tokens". Docked, it is not in
+`headerContainer`, so its setting and "there is a conversation" rules are applied to it
+directly (`_syncExportVisibility`). `test/export-dock.test.js` covers it; `composer.html`
+draws the docked look beside a mock group, but where it lands in Claude's own row (that row's
+flex rules are not ours) needs a real page. The menu takes focus when it opens and Escape
+hands it back to the button: the menu sits at the end of `document.body`.
 
 **Colours live in the stylesheet, not in script.** `styles.css` defines the
 `--cc-*` custom properties on `:root` and overrides them under
 `html[data-mode="dark"]`, so a theme change needs no code. Do not set colours
-from JS: an inline colour also beats the classes the docked export button borrows
-from Claude. Whether a colour is *right* needs a real page; `composer.html`
+from JS. The docked export button's size and icon size are stylesheet rules too
+(`.cc-exportBtn--docked`). Whether a colour is *right* needs a real page; `composer.html`
 (below) renders every coloured part, and flipping `data-mode` on it is the check.
 
 **The counter and timer are one chip, and their labels are not drawn.** The
@@ -169,6 +179,15 @@ per refresh.
 refresh counts the whole trunk. A per-message cache used to key on a SHA-256 that
 had to be fetched from the page world one `postMessage` round trip per message,
 which cost far more than the counting it saved.
+
+**A number on screen must belong to what is on screen.** Three cases once did not, and
+`test/wrong-data.test.js` pins them. The stored snapshot is seeded only when its `orgId`
+is this org's: after switching account, a plan that reports nothing on demand kept the
+other account's bars. A window whose reset passes while the page is open is cleared to
+"—" before the refresh, which on such a plan returns nothing and left "92% (resets in
+0s)" standing. And a navigation clears the count before fetching the new chat's, or a
+failed fetch left the last chat's on it. An empty-but-successful usage answer is asked
+again hourly, not on the five-minute retry meant for failures.
 
 **The plan travels with the diagnostics, not the usage snapshot.** The snapshot
 is written only once an account reports usage, so a plan kept there was
@@ -270,7 +289,12 @@ every edit and every abandoned retry in one flat `chat_messages` array, so this
 walk is what separates the conversation as it reads from its dead ends.
 `export.js` reuses the same walk, and additionally replays `str_replace` edits
 onto files created by `create_file` so an exported file matches the version that
-was actually used rather than the one first written.
+was actually used rather than the one first written. The classic `artifacts` tool
+edits in place with `command: 'update'` and the same `old_str`/`new_str`; those are
+replayed too, keyed by the artifact's `id` (`fileKey`). Blank lines are tidied
+between blocks only, never inside one: a global `\n{3,}` replace used to take the
+double blank lines out of every exported Python file and code block. Filenames keep
+letters and digits of any script.
 
 ## Popup and settings
 
@@ -301,7 +325,8 @@ and the string derives from it, as in a real element.
 
 `test/security.test.js` is a guard, not documentation: it fails on `eval`,
 `innerHTML`, widened permissions, an unpinned action, a lockfile entry without an
-integrity hash, or an install that could run lifecycle scripts.
+integrity hash, an install that could run lifecycle scripts, or a vendored tokenizer
+whose SHA-256 is not the one in `THIRD_PARTY_NOTICES.md`.
 
 `test/inventory.test.js` exists because the elapsed-time marker was deleted in a
 3,800-line release commit and shipped missing: every other suite tests a

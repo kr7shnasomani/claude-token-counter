@@ -378,6 +378,17 @@ html[data-mode="dark"] {
 	background: none;
 }
 
+/* Out of the composer the row has no width to share out, and bars that only
+   flex collapsed to a sliver with their labels on top of them. */
+.cc-usageRow.cc-floating .cc-usageGroup {
+	flex: none;
+}
+
+.cc-usageRow.cc-floating .cc-bar {
+	flex: none;
+	width: 72px;
+}
+
 .cc-header.cc-floating {
 	top: 56px;
 }
@@ -388,11 +399,26 @@ html[data-mode="dark"] {
 
 /* Export button + format menu (base look shared with the refresh button above) */
 
-/* Docked beside Claude's own page icon: its classes supply the look, size and
-   hover. This only undoes what the undocked button needs and the docked one
-   does not (the dimmed resting opacity). */
+/* Beside Claude's top-right controls, in our own look: a quiet 32px icon button
+   that brightens on hover. Claude's own buttons are not borrowed or entered. */
 .cc-exportBtn--docked {
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border-radius: 8px;
+	opacity: 0.7;
+}
+
+/* The icon is built at the small size; docked, the stylesheet enlarges it. */
+.cc-exportBtn--docked .cc-exportIcon {
+	width: 18px;
+	height: 18px;
+	stroke-width: 1.75;
+}
+
+.cc-exportBtn--docked:hover {
 	opacity: 1;
+	background: var(--cc-pop-hover);
 }
 
 .cc-exportBtn--busy {

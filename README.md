@@ -102,7 +102,7 @@ No conversation content is ever stored. Exports are written straight to a downlo
 
 ## Exporting a conversation
 
-Click the download icon in the top-right corner of a chat, just left of Claude's page icon (it matches the icons beside it and moves with them as panels open), and pick **Markdown (.md)** or **Plain text (.txt)**. The file is built in the browser and saved straight to your downloads; nothing is uploaded anywhere. On a layout with no icon to sit beside, the button stays next to the token counter instead.
+Click the download icon in the top-right corner of a chat, just left of Claude's own controls (it moves with them as panels open), and pick **Markdown (.md)** or **Plain text (.txt)**. The file is built in the browser and saved straight to your downloads; nothing is uploaded anywhere. On a layout with no controls to sit beside, the button stays next to the token counter instead.
 
 An export contains every message on the active branch, generated files in full, and one-line summaries of the tools Claude used. Alternate versions of edited messages, thinking blocks, and raw tool output are left out. Binary outputs such as `.xlsx` files live in Claude's sandbox rather than in the conversation, so they are referenced by name but cannot be embedded.
 

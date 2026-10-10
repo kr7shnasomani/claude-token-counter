@@ -122,8 +122,8 @@
 
 	async function handleConversationResponse({ orgId, conversationId }, response) {
 		try {
-			const cloned = response.clone();
-			const data = await cloned.json();
+			if (!response.ok) return;
+			const data = await response.clone().json();
 			post('cc:conversation', { orgId, conversationId, data });
 		} catch {
 			// ignore parse failures
@@ -174,6 +174,15 @@
 		}
 	}
 
+	// An HTTP error still answers with JSON (a rate limit, an expired session), and
+	// read as data it became an empty conversation, a "no usage" account and a FREE
+	// plan. It is a failure, and is reported as one.
+	async function getJson(url) {
+		const res = await originalFetch(url, { method: 'GET', credentials: 'include' });
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		return res.json();
+	}
+
 	window.addEventListener('message', async (event) => {
 		if (event.source !== window) return;
 		const data = event.data;
@@ -185,22 +194,12 @@
 			if (kind === 'usage') {
 				const orgId = safeId(payload?.orgId);
 				if (!orgId) throw new Error('Invalid orgId');
-				const res = await originalFetch(`https://claude.ai/api/organizations/${orgId}/usage`, {
-					method: 'GET',
-					credentials: 'include'
-				});
-				const json = await res.json();
-				postResponse(requestId, true, json, null);
+				postResponse(requestId, true, await getJson(`https://claude.ai/api/organizations/${orgId}/usage`), null);
 				return;
 			}
 
 			if (kind === 'orgs') {
-				const res = await originalFetch('https://claude.ai/api/organizations', {
-					method: 'GET',
-					credentials: 'include'
-				});
-				const json = await res.json();
-				postResponse(requestId, true, json, null);
+				postResponse(requestId, true, await getJson('https://claude.ai/api/organizations'), null);
 				return;
 			}
 
@@ -210,13 +209,9 @@
 				if (!orgId || !conversationId) throw new Error('Invalid orgId/conversationId');
 
 				const url = `https://claude.ai/api/organizations/${orgId}/chat_conversations/${conversationId}?tree=true&rendering_mode=messages&render_all_tools=true`;
-				const res = await originalFetch(url, {
-					method: 'GET',
-					credentials: 'include'
-				});
 				// Answered once, in the response: broadcasting it as well meant cloning a
 				// whole conversation across the world boundary twice per refresh.
-				postResponse(requestId, true, await res.json(), null);
+				postResponse(requestId, true, await getJson(url), null);
 				return;
 			}
 

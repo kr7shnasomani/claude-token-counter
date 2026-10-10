@@ -64,7 +64,9 @@ t('no analytics or telemetry', !/analytics|telemetry|sentry|mixpanel|segment\.io
 
 section('supply chain');
 t('runtime ships no dependencies', !JSON.parse(read('package.json')).dependencies);
-t('vendored tokenizer hash is recorded', /SHA-256 of the vendored file/.test(read('THIRD_PARTY_NOTICES.md')));
+// Recorded is not enough: a changed file with an unchanged notice must fail here.
+const vendorHash = require('crypto').createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'src/vendor/o200k_base.js'))).digest('hex');
+t('vendored tokenizer matches its recorded hash', read('THIRD_PARTY_NOTICES.md').includes('SHA-256 of the vendored file: `' + vendorHash + '`'));
 
 section('dependencies cannot execute code on install');
 // npm runs preinstall/install/postinstall automatically. Nothing here needs to

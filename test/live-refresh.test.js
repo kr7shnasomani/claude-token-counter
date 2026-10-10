@@ -91,6 +91,28 @@ async function waitFor(cond, ms = 500) {
 		t('  and the error still reaches claude.ai', threw);
 	}
 
+	section('bridge: an HTTP error is a failure, not data');
+	{
+		// A 429 or 401 answers with JSON. Passed on as data it became an empty export,
+		// a "no usage" account and a FREE plan.
+		const listeners = [];
+		const posted = [];
+		const window = {
+			fetch: async () => new Response('{"type":"error"}', { status: 429, headers: { 'content-type': 'application/json' } }),
+			location: { origin: 'https://claude.ai' }, postMessage: (m) => posted.push(m),
+			addEventListener: (_type, fn) => listeners.push(fn), dispatchEvent() {}
+		};
+		vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/injected/bridge.js'), 'utf8'), vm.createContext({
+			window, history: { pushState() {}, replaceState() {} }, CustomEvent: class {}, Request, Response, TextDecoder, URL, console
+		}));
+		for (const [kind, payload] of [['usage', { orgId: ORG }], ['orgs', {}], ['conversation', { orgId: ORG, conversationId: CONV }]]) {
+			posted.length = 0;
+			for (const fn of listeners) await fn({ source: window, data: { cc: 'ClaudeCounter', type: 'cc:request', requestId: 'r', kind, payload } });
+			const res = posted.find((m) => m.type === 'cc:response');
+			t(kind + ': refused, with the status', res?.ok === false && res.payload === null && /429/.test(res.error), JSON.stringify(res));
+		}
+	}
+
 	section('bridge: completion detection');
 	{
 		const b = loadBridge(async () => new Response(sse([{ type: 'message_stop' }]), { headers: { 'content-type': 'text/event-stream' } }));

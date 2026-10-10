@@ -7,13 +7,13 @@
 		CHAT_MENU_TRIGGER: '[data-testid="chat-title-split"]',
 		CHAT_HEADER: '[data-testid="chat-header"]',
 		HEADER_FALLBACK: 'header',
-		// Claude's top-right action group (page icon, Share). The export button
-		// docks here and borrows the look of an icon button already in it.
+		// Claude's top-right action group (page icon, Share). The export button sits
+		// right before it, as a sibling in our own look, never inside it.
 		ACTIONS_HOST: '[data-testid="wiggle-controls-actions"]',
 		ACTIONS_ICON_BUTTON: 'button[data-cds="Button"][data-cds-icon-only]',
-		// With an artifact panel open Claude hides the action group's Share button
-		// and leaves that group with nothing to copy, but the chat header still has
-		// this icon button on its right. The export button docks beside it instead.
+		// With an artifact panel open Claude hides the action group (no icon button is
+		// left in it), but the chat header still has this icon button on its right.
+		// The export button sits right before it instead.
 		POP_OUT_BUTTON: '[data-testid="chat-pop-out"]',
 		// Set by the page itself on a reply that is still being written. Present on
 		// layouts that send over their own RPC rather than a /completion stream.
@@ -88,8 +88,10 @@
 		if (!w || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) return null;
 		const utilization = Math.max(0, Math.min(100, fromEvent ? w.utilization * 100 : w.utilization));
 		const r = w.resets_at;
+		// A finite number can still be out of range for a date, and toISOString throws on one.
+		const eventMs = typeof r === 'number' ? r * 1000 : NaN;
 		const resets_at = fromEvent
-			? (typeof r === 'number' && Number.isFinite(r) ? new Date(r * 1000).toISOString() : null)
+			? (Math.abs(eventMs) <= 8.64e15 ? new Date(eventMs).toISOString() : null)
 			: (typeof r === 'string' ? r : null);
 		return { utilization, resets_at };
 	};

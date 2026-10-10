@@ -106,6 +106,28 @@ t('stamp is local date, not UTC', f1.filename.includes(local));
 t('txt extension and mime', f2.filename.endsWith('.txt') && f2.mime === 'text/plain');
 t('unknown format falls back to markdown', X.buildFile(conv, 'bogus').filename.endsWith('.md'));
 
+section('content is exported as written');
+{
+	const m = (uuid, parent, sender, content) => ({ uuid, parent_message_uuid: parent, sender, created_at: '2026-08-27T09:00:00Z', content });
+	const py = 'import os\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2';
+	const spaced = { name: 'T', current_leaf_message_uuid: 'b', chat_messages: [
+		m('a', ROOT, 'human', [{ type: 'text', text: 'make it' }]),
+		m('b', 'a', 'assistant', [{ type: 'text', text: 'Here:\n```\none\n\n\n\nfive\n```' },
+			{ type: 'tool_use', name: 'create_file', input: { path: '/out/app.py', file_text: py } }])] };
+	t('a file keeps its blank lines (markdown)', X.buildMarkdown(spaced).includes(py));
+	t('a file keeps its blank lines (plain text)', X.buildText(spaced).includes(py));
+	t('so does a code block in a message', X.buildMarkdown(spaced).includes('one\n\n\n\nfive'));
+
+	const updated = { name: 'T', current_leaf_message_uuid: 'c', chat_messages: [
+		m('a', ROOT, 'human', [{ type: 'text', text: 'plan it' }]),
+		m('b', 'a', 'assistant', [{ type: 'tool_use', name: 'artifacts', input: { command: 'create', id: 'doc1', title: 'Plan', content: 'Budget: 100' } }]),
+		m('c', 'b', 'assistant', [{ type: 'tool_use', name: 'artifacts', input: { command: 'update', id: 'doc1', old_str: 'Budget: 100', new_str: 'Budget: 250' } }])] };
+	const out = X.buildMarkdown(updated);
+	t('an artifact update is replayed onto the artifact', out.includes('Budget: 250') && !out.includes('Budget: 100'));
+	t('and said to be the final version', out.includes('final version, 1 edit applied'));
+	t('a non-Latin title still names the file', X.slugify('项目计划 第二版') === '项目计划-第二版' && X.slugify('Отчёт за квартал') === 'отчёт-за-квартал');
+}
+
 section('robustness');
 t('empty conversation', X.buildMarkdown({ name: 'x', chat_messages: [] }).length > 0);
 t('missing fields', X.buildMarkdown({}).length > 0);

@@ -288,11 +288,10 @@
 			this.exportBtn = null;
 			this.exportIcon = null;
 			this.exportMenu = null;
-			// True while the button sits in Claude's top-right action group, wearing
-			// the classes it borrowed from a neighbouring icon button.
+			// True while the button sits beside Claude's top-right controls (see
+			// _actionsTarget), in the docked look.
 			this.exportDocked = false;
 			this.exportTier = null;
-			this.nativeExportClasses = [];
 			// The action group is drawn after the header, so for the first moments of a
 			// chat there is nowhere to dock yet. Showing the button beside the counter in
 			// the meantime made it flash there before jumping to its real place; it is
@@ -564,6 +563,7 @@
 			this.exportBtn.className = 'cc-exportBtn';
 			this.exportBtn.setAttribute('aria-label', 'Export conversation');
 			this.exportBtn.setAttribute('aria-haspopup', 'menu');
+			this.exportBtn.setAttribute('aria-expanded', 'false');
 			this.exportIcon = svgIcon('cc-exportIcon', 11, [
 				['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }],
 				['polyline', { points: '7 10 12 15 17 10' }],
@@ -597,7 +597,11 @@
 
 			document.addEventListener('click', () => this._closeFloaters());
 			document.addEventListener('keydown', (e) => {
-				if (e.key === 'Escape') this._closeFloaters();
+				if (e.key !== 'Escape') return;
+				// Escape from the menu hands the keyboard back to the button that opened it.
+				const menuOpen = !this.exportMenu.classList.contains('cc-hidden');
+				this._closeFloaters();
+				if (menuOpen) this.exportBtn.focus?.();
 			});
 		}
 
@@ -648,11 +652,16 @@
 		_openExportMenu() {
 			this._closeFloaters();
 			this.exportMenu.classList.remove('cc-hidden');
+			this.exportBtn.setAttribute('aria-expanded', 'true');
 			placeNear(this.exportMenu, this.exportBtn, 6, true);
+			// The menu sits at the end of the page, a whole document of tab stops away
+			// from its button. Put the keyboard in it.
+			this.exportMenu.firstElementChild?.focus?.();
 		}
 
 		_closeExportMenu() {
 			this.exportMenu?.classList.add('cc-hidden');
+			this.exportBtn?.setAttribute('aria-expanded', 'false');
 		}
 
 		/** Close whichever of our menus and popovers is open. */
@@ -720,21 +729,23 @@
 		}
 
 		/**
-		 * Claude's top-right action group and an icon button in it to copy, or null
-		 * when there is nothing to dock beside (home page, or a layout without the
-		 * group). Our own button is skipped: once docked it carries the same
-		 * attributes, and would otherwise be found as its own model.
+		 * Where the export button goes: a sibling right beside Claude's own top-right
+		 * controls, never inside them, and in our own look - Claude's groups are its
+		 * to arrange and have been drawn differently in every layout seen. `before` is
+		 * the element we sit in front of. Null when there is nothing to sit beside
+		 * (home page, or a layout without the controls).
 		 */
 		_actionsTarget() {
 			if (!/\/chat\//.test(window.location.pathname)) return null;
 			const host = document.querySelector(CC.DOM.ACTIONS_HOST);
-			const ref = host && [...host.querySelectorAll(CC.DOM.ACTIONS_ICON_BUTTON)].find((b) => b !== this.exportBtn);
-			if (ref) return { host, ref, tier: 'actions', before: host.firstElementChild === this.exportBtn ? this.exportBtn : host.firstElementChild };
-			// An artifact panel takes Claude's Share button away (the group stays, hidden
-			// and with nothing to copy). The header's pop-out icon is still there.
-			const popOut = document.querySelector(CC.DOM.POP_OUT_BUTTON);
-			if (popOut?.parentElement) return { host: popOut.parentElement, ref: popOut, tier: 'popout', before: popOut };
-			return null;
+			const hasIcons = !!host?.querySelector(CC.DOM.ACTIONS_ICON_BUTTON);
+			// An artifact panel keeps the group but hides it (seen 2026-10-08), so the
+			// header's pop-out icon is the neighbour then. A task-style chat ("Step 5 of
+			// 6", seen 2026-10-09) has the group with only a Share button and no pop-out.
+			const popOut = !hasIcons && document.querySelector(CC.DOM.POP_OUT_BUTTON);
+			const anchor = popOut || host;
+			if (!anchor?.parentElement) return null;
+			return { host: anchor.parentElement, before: anchor, tier: popOut ? 'popout' : 'actions' };
 		}
 
 		/** Keep the export button out of the header for a while longer; see the constructor. */
@@ -747,15 +758,15 @@
 			if (!this.exportBtn) return false;
 			const target = this._actionsTarget();
 			if (!target) return this.exportDocked;
-			return !this.exportDocked || this.exportBtn.parentElement !== target.host ||
-				(target.tier === 'popout' && this.exportBtn.nextElementSibling !== target.before);
+			return !this.exportDocked || this.exportBtn.parentElement !== target.host || this.exportBtn.nextElementSibling !== target.before;
 		}
 
 		/**
-		 * Put the export button beside Claude's own page icon, looking like it, or
-		 * back beside the token counter when there is no such icon. Claude moves and
-		 * re-renders that group as panels open and close, so this is re-run from the
-		 * DOM observer rather than trusted to stick.
+		 * Put the export button beside Claude's top-right controls, or back beside the
+		 * token counter when there are none. Claude moves and re-renders those as
+		 * panels open and close, so this is re-run from the DOM observer rather than
+		 * trusted to stick, and only touches the DOM when the button is not already
+		 * in place, or the observer would chase its own tail.
 		 */
 		_placeExport() {
 			const btn = this.exportBtn;
@@ -765,52 +776,20 @@
 				if (this.exportDocked) this._undockExport();
 				return;
 			}
-			// Re-borrow the look when the target kind changes (artifact panel opened or
-			// closed): the two neighbours are not guaranteed to be styled alike.
-			if (!this.exportDocked || this.exportTier !== target.tier) this._dockExport(target.ref);
+			if (!this.exportDocked) this._dockExport();
 			this.exportTier = target.tier;
-			// Left of the page icon (first in the group), or right before the pop-out
-			// icon. Only touch the DOM when it is not already so, or the observer
-			// would chase its own tail.
-			const placed = btn.parentElement === target.host &&
-				(target.tier === 'popout' ? btn.nextElementSibling === target.before : target.host.firstElementChild === btn);
-			if (!placed) target.host.insertBefore(btn, target.before);
+			if (btn.parentElement !== target.host || btn.nextElementSibling !== target.before) target.host.insertBefore(btn, target.before);
 			this._syncExportVisibility();
 		}
 
-		_dockExport(ref) {
-			const btn = this.exportBtn;
-			for (const name of ['data-cds', 'data-cds-icon-only', 'data-cds-ghost', 'data-size']) {
-				if (ref.hasAttribute(name)) btn.setAttribute(name, ref.getAttribute(name));
-			}
-			btn.classList.remove(...this.nativeExportClasses);
-			this.nativeExportClasses = String(ref.className).split(/\s+/).filter(Boolean);
-			btn.classList.remove('cc-exportBtn');
-			btn.classList.add('cc-exportBtn--docked', ...this.nativeExportClasses);
-
-			// Claude's buttons paint their background in a child span; borrow that
-			// too, or hover and focus would have nothing to draw on.
-			const inner = document.createElement('span');
-			inner.className = 'inline-flex min-w-0 items-center gap-1';
-			inner.appendChild(this.exportIcon);
-			const paint = ref.firstElementChild?.cloneNode(true);
-			btn.replaceChildren(...(paint ? [paint, inner] : [inner]));
-			this.exportIcon.setAttribute('width', '18');
-			this.exportIcon.setAttribute('height', '18');
-			this.exportIcon.setAttribute('stroke-width', '1.75');
+		_dockExport() {
+			this.exportBtn.classList.add('cc-exportBtn--docked');
 			this.exportDocked = true;
 		}
 
 		_undockExport() {
 			const btn = this.exportBtn;
-			for (const name of ['data-cds', 'data-cds-icon-only', 'data-cds-ghost', 'data-size']) btn.removeAttribute(name);
-			btn.classList.remove('cc-exportBtn--docked', ...this.nativeExportClasses);
-			btn.classList.add('cc-exportBtn');
-			this.nativeExportClasses = [];
-			btn.replaceChildren(this.exportIcon);
-			this.exportIcon.setAttribute('width', '11');
-			this.exportIcon.setAttribute('height', '11');
-			this.exportIcon.setAttribute('stroke-width', '2.2');
+			btn.classList.remove('cc-exportBtn--docked');
 			this.exportDocked = false;
 			// A group that has gone may be a re-render about to bring it back; hold the
 			// button back for the same grace rather than flash it in the header.
@@ -853,7 +832,22 @@
 		}
 
 		_keepSeen(key, el, wanted) {
-			if (!el || el.classList.contains('cc-floating')) return;
+			if (!el) return;
+			// Floating is for a chat whose layout left no place, not for every claude.ai
+			// page: sign-in, settings and the rest have no composer because they are not
+			// chats, and the pill showed up over them (seen on /oauth/authorize).
+			const onChat = /\/chat\//.test(window.location.pathname) || !!document.querySelector(CC.DOM.CHAT_INPUT);
+			if (el.classList.contains('cc-floating')) {
+				if (!onChat) {
+					el.classList.remove('cc-floating');
+					el.remove();
+				}
+				return;
+			}
+			if (!onChat) {
+				this.unseen[key] = 0;
+				return;
+			}
 			// No layout to ask (a non-rendering context) is taken as painted: floating
 			// on a guess would be worse than not floating.
 			const rects = document.contains(el) ? el.getClientRects?.() : [];

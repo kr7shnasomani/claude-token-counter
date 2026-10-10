@@ -77,6 +77,30 @@ section('the usage row floats too, without the composer\'s insets');
 	t('reported', ui.getDiagnostics().floating.includes('usage'));
 }
 
+section('only where there is a chat: not over sign-in, settings and the rest');
+{
+	// Seen on /oauth/authorize: no composer there because it is not a chat, and the
+	// usage pill floated over the page.
+	const { ctx, ui } = make();
+	ui.setUsage({ five_hour: { utilization: 2, resets_at: new Date(Date.now() + 3600e3).toISOString() } });
+	ctx.window.location.pathname = '/oauth/authorize';
+	unpaint(ui.usageLine);
+	ticks(ui, 5);
+	t('not floated on a page with no chat', !ui.usageLine.classList.contains('cc-floating') && !ctx.document.body.children.includes(ui.usageLine));
+
+	ctx.window.location.pathname = '/chat/00000000-0000-4000-8000-000000000000';
+	ticks(ui, 3);
+	t('floated on a chat that left it no place', ui.usageLine.classList.contains('cc-floating'));
+	ctx.window.location.pathname = '/settings/profile';
+	ticks(ui, 1);
+	t('taken away again on leaving for a page that is not one', !ui.usageLine.classList.contains('cc-floating') && !ctx.document.body.children.includes(ui.usageLine));
+
+	ctx.window.location.pathname = '/new';
+	ctx.document.querySelector = (sel) => (sel === ctx.ClaudeCounter.DOM.CHAT_INPUT ? ctx.document.createElement('div') : null);
+	ticks(ui, 3);
+	t('a page with a composer counts as a chat whatever its path', ui.usageLine.classList.contains('cc-floating'));
+}
+
 section('it goes home when its real place is back');
 {
 	const { ctx, ui, observers } = make();

@@ -66,6 +66,9 @@
 	// A seeded reading is a placeholder, not a reading. Tracked separately so it
 	// never counts as "we already have usage".
 	let usageIsSeeded = false;
+	// The usage endpoint answered, with no windows (free tier). Asked again hourly,
+	// not on the five-minute retry meant for a failed request.
+	let usageEmpty = false;
 	const rolloverHandledForResetMs = { five_hour: null, seven_day: null };
 
 	const ui = new CC.ui.CounterUI({
@@ -128,6 +131,7 @@
 		const parsed = parseUsageFromUsageEndpoint(raw);
 		// A successful response carrying no windows is an answer, not a failure: this
 		// plan does not publish usage until a message has been sent.
+		usageEmpty = !parsed;
 		if (!parsed) ui.markUsageUnavailable();
 		applyUsageUpdate(parsed, 'usage');
 	}
@@ -227,6 +231,10 @@
 		const items = await CC.storageGet(CC.SNAPSHOT_KEY);
 		const snapshot = items?.[CC.SNAPSHOT_KEY];
 		if (!snapshot || usageState) return;
+		// Usage belongs to an organisation. After switching account or org the stored
+		// reading is someone else's, and on a plan that reports nothing it would stay.
+		const orgId = resolveOrgId();
+		if (snapshot.orgId && orgId && snapshot.orgId !== orgId) return;
 		// Per-model limits are only ever read from the usage endpoint; keep the last
 		// ones so a reading from the message stream does not overwrite them with none.
 		if (Array.isArray(snapshot.scoped)) lastScoped = snapshot.scoped;
@@ -400,6 +408,8 @@
 			countSeen = false;
 			emptyRefreshes = 0;
 			lastEmptyRefreshMs = Date.now(); // the read this navigation makes counts as the first
+			// The last chat's count is not this one's, and would stay if this fetch failed.
+			ui.setConversationMetrics();
 		}
 		// A new page redraws Claude's header; keep the export button from flashing in
 		// ours while its own group is drawn.
@@ -524,6 +534,11 @@
 			const resetMs = usageResetMs[key];
 			if (resetMs && now >= resetMs && rolloverHandledForResetMs[key] !== resetMs) {
 				rolloverHandledForResetMs[key] = resetMs;
+				// The old figure is wrong from here on. Plans that report nothing on
+				// demand would otherwise keep showing it, "resets in 0s", until a message.
+				usageResetMs[key] = null;
+				usageState = { ...usageState, [key]: null };
+				ui.setUsage(usageState);
 				refreshUsage();
 			}
 		}
@@ -533,7 +548,7 @@
 		// attempt clock is what keeps this from firing on every tick.
 		const anyAge = now - lastUsageUpdateMs;
 		const attemptAge = now - lastUsageAttemptMs;
-		if (!document.hidden && anyAge > ONE_HOUR_MS && attemptAge > USAGE_RETRY_MS) {
+		if (!document.hidden && anyAge > ONE_HOUR_MS && attemptAge > (usageEmpty ? ONE_HOUR_MS : USAGE_RETRY_MS)) {
 			refreshUsage();
 		}
 	}

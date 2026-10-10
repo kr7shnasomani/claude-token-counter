@@ -7,6 +7,8 @@
 	// The same shape bridge.js insists on before an id goes into a URL path.
 	const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 	const DRAFT_KEY = 'cc:feedbackDraft';
+	// GitHub does not publish its limit; long links fail at around 8 KB.
+	const MAX_ISSUE_URL = 7000;
 
 	/** "resets 4h" / "resets 6d" / "resets 12m" - coarse, like Claude's own panel. */
 	function formatReset(iso) {
@@ -315,13 +317,23 @@
 			...(diag || current ? [] : ['Seen on claude.ai: no (no claude.ai tab has reported since install or reload)']),
 			...diagLines(diag)
 		];
-		const body = `${description}\n\n---\n${facts.join('\n')}\n`;
-		const url = `${ISSUES_URL}?title=${encodeURIComponent(description.split('\n')[0].slice(0, 70))}&body=${encodeURIComponent(body)}`;
+		// GitHub answers an over-long URL with 414 and no form, and encoding makes
+		// non-Latin text nine times longer. Trim the description to fit, and keep the
+		// draft when it was trimmed, so the full text is never lost.
+		const build = (text) => `${ISSUES_URL}?title=${encodeURIComponent(description.split('\n')[0].slice(0, 70))}&body=${encodeURIComponent(`${text}\n\n---\n${facts.join('\n')}\n`)}`;
+		let sent = description;
+		let url = build(sent);
+		while (url.length > MAX_ISSUE_URL && sent.length > 1) {
+			sent = sent.slice(0, Math.floor(sent.length * 0.9));
+			url = build(`${sent}\n\n[cut to fit the link; paste the rest from the extension's feedback box]`);
+		}
 
 		window.open(url, '_blank', 'noopener');
-		// The report is on its way out, so the draft has served its purpose.
-		document.getElementById('feedbackText').value = '';
-		storage.remove(DRAFT_KEY);
+		if (sent === description) {
+			// The whole report is on its way out, so the draft has served its purpose.
+			document.getElementById('feedbackText').value = '';
+			storage.remove(DRAFT_KEY);
+		}
 		showPanel('usage');
 	}
 

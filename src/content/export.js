@@ -53,7 +53,8 @@
 	function slugify(name) {
 		const base = String(name || 'claude-conversation')
 			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, '-')
+			// Letters and digits of any script: a Chinese or Hindi title is still a name.
+			.replace(/[^\p{L}\p{N}]+/gu, '-')
 			.replace(/^-+|-+$/g, '')
 			.slice(0, 60);
 		return base || 'claude-conversation';
@@ -73,6 +74,13 @@
 			return { name: input.title || input.id || 'artifact', text: input.content, lang: input.language };
 		}
 		return null;
+	}
+
+	/** What a generated file is known by across turns: its path, or an artifact's id. */
+	function fileKey(item) {
+		const input = item?.input || {};
+		if (typeof input.path === 'string') return input.path;
+		return item?.name === 'artifacts' && typeof input.id === 'string' ? `artifact:${input.id}` : null;
 	}
 
 	/** Apply one str_replace edit. Literal match on the first occurrence only. */
@@ -97,20 +105,21 @@
 				if (item?.type !== 'tool_use') continue;
 				const input = item.input || {};
 
-				if (FILE_TOOLS.has(item.name)) {
+				const key = fileKey(item);
+				// The classic artifacts tool edits in place with the same old/new pair.
+				const isEdit = item.name === 'str_replace' || (item.name === 'artifacts' && input.command === 'update');
+				if (FILE_TOOLS.has(item.name) && !isEdit) {
 					const file = asGeneratedFile(item);
-					if (file && typeof input.path === 'string') {
-						byPath.set(input.path, { text: file.text, edits: 0, failed: 0 });
-					}
+					if (file && key) byPath.set(key, { text: file.text, edits: 0, failed: 0 });
 					continue;
 				}
 
-				if (item.name === 'str_replace' && typeof input.path === 'string') {
-					const state = byPath.get(input.path);
+				if (isEdit && key) {
+					const state = byPath.get(key);
 					if (!state) {
 						// Created outside this transcript (a shell heredoc, an earlier
 						// branch): there is no base text to apply the edit to.
-						orphans.add(input.path);
+						if (item.name === 'str_replace') orphans.add(input.path);
 						continue;
 					}
 					const next = applyEdit(state.text, input.old_str, input.new_str);
@@ -142,7 +151,7 @@
 			if (item?.type === 'tool_use') {
 				const file = asGeneratedFile(item);
 				if (file) {
-					const state = files?.byPath.get(item.input?.path);
+					const state = files?.byPath.get(fileKey(item));
 					blocks.push({ kind: 'file', ...file, ...(state ? { text: state.text, edits: state.edits, failed: state.failed } : {}) });
 					continue;
 				}
@@ -237,7 +246,9 @@
 			}
 		}
 
-		return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+		// One blank line between blocks at most. Decided on the blocks, not on the joined
+		// text: a file or a code block keeps every blank line it was written with.
+		return out.filter((line, i) => line !== '' || out[i - 1] !== '').join('\n').trimEnd() + '\n';
 	}
 
 	const buildMarkdown = (conversation) => render(conversation, MARKDOWN);
