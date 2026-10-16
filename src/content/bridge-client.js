@@ -3,10 +3,6 @@
 
 	const CC = (globalThis.ClaudeCounter = globalThis.ClaudeCounter || {});
 
-	function getRuntime() {
-		return globalThis.browser?.runtime || globalThis.chrome?.runtime || null;
-	}
-
 	function makeRequestId() {
 		return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 	}
@@ -87,30 +83,16 @@
 		}
 	}
 
-	let bridgeReadyPromise = null;
-
-	function injectBridgeOnce() {
-		if (bridgeReadyPromise) return bridgeReadyPromise;
-
-		const runtime = getRuntime();
-		if (!runtime) return Promise.resolve(false);
-
-		if (document.getElementById(CC.DOM.BRIDGE_SCRIPT_ID)) {
-			return Promise.resolve(true);
-		}
-
-		bridgeReadyPromise = new Promise((resolve) => {
-			const script = document.createElement('script');
-			script.id = CC.DOM.BRIDGE_SCRIPT_ID;
-			script.src = runtime.getURL('src/injected/bridge.js');
-			script.onload = () => resolve(true);
-			script.onerror = () => resolve(false);
-			(document.head || document.documentElement).appendChild(script);
-		});
-
-		return bridgeReadyPromise;
+	/**
+	 * The bridge is declared in the manifest to run in the page's own world at
+	 * document_start, so it is in place before claude.ai's first script, and long
+	 * before this one, so there is nothing to wait for. What it may have seen before
+	 * we were listening (the org id) it says again when greeted.
+	 */
+	function connectBridge() {
+		window.postMessage({ cc: 'ClaudeCounter', type: 'cc:hello' }, 'https://claude.ai');
 	}
 
 	CC.bridge = new BridgeClient();
-	CC.injectBridgeOnce = injectBridgeOnce;
+	CC.connectBridge = connectBridge;
 })();

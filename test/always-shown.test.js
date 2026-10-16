@@ -2,7 +2,9 @@
 // or the usage row silently vanishing until someone noticed and shipped a fix.
 // The safety net: a part with something to say that goes unpainted for a few
 // ticks is floated over the page as a pill, and tries its real place again later.
-const { loadWith, section, t, report } = require('./harness');
+const { load, loadWith, section, t, report } = require('./harness');
+// The title selector as shipped, so a reorder of it does not break these.
+const TITLE = load('src/content/constants.js').ClaudeCounter.DOM.CHAT_MENU_TRIGGER;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -22,6 +24,34 @@ const paint = (el) => { el.getClientRects = () => [{ width: 100 }]; };
 const ticks = (ui, n) => { for (let i = 0; i < n; i++) ui.tick(); };
 
 (async () => {
+section('out of messages, the row goes under the notice that replaced the composer');
+{
+	const { ctx, ui, observers } = make();
+	const foot = ctx.document.createElement('div');
+	const panel = ctx.document.createElement('div');
+	const after = ctx.document.createElement('div');
+	foot.append(panel, after);
+	ctx.document.querySelector = (sel) => (sel === '[data-testid="free-limit-panel"]' ? panel : null);
+	ui.usageLine.classList.add('cc-floating');
+	ui.attachUsageLine();
+	t('right after the notice, not inside it', foot.children[1] === ui.usageLine && panel.children.length === 0);
+	t('and no longer floating', !ui.usageLine.classList.contains('cc-floating'));
+	t('reported as its own layout', ctx.ClaudeCounter.uiVariant === 'limit');
+
+	// The limit resets and the composer comes back. The row is outside it, so
+	// nothing removes it from the page; the observer has to move it home.
+	const card = ctx.document.createElement('div');
+	card.hasAttribute = (k) => k === 'data-cds';
+	const input = ctx.document.createElement('div');
+	input.closest = () => card;
+	card.appendChild(input);
+	ctx.document.querySelector = (sel) => (sel === '[data-testid="chat-input"]' ? input : null);
+	ctx.window.getComputedStyle = () => ({ paddingLeft: '0px', paddingRight: '0px' });
+	observers.forEach((cb) => cb([]));
+	t('the composer back: the row goes back into it', card.children.includes(ui.usageLine) && !foot.children.includes(ui.usageLine));
+	t('  and is no longer reported as beside the notice', ctx.ClaudeCounter.uiVariant === 'cds');
+}
+
 section('a part nobody can see is floated, after a few ticks');
 {
 	const { ctx, ui } = make();
@@ -110,7 +140,7 @@ section('it goes home when its real place is back');
 
 	const title = ctx.document.createElement('div');
 	title.after = (n) => { title.sibling = n; };
-	ctx.document.querySelector = (sel) => (sel === '[data-testid="chat-title-split"]' ? title : null);
+	ctx.document.querySelector = (sel) => (sel === TITLE ? title : null);
 
 	ui.floatRetryAt.header = Date.now() + 60000;
 	observers.forEach((cb) => cb());

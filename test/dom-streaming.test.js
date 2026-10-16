@@ -64,5 +64,18 @@ const CONV = '00000000-0000-4000-8000-000000000000';
 	await fire();
 	t('the bridge\'s end is kept; the page signal stands down just after it', calls === afterBridge);
 
+	section('a reply too short to be seen streaming still ends');
+	{
+		// On and off between two looks: the flag is gone by the time it is checked,
+		// and only the mutation record says it was ever on.
+		clock.t += 30000;
+		const before = calls;
+		observers.forEach((cb) => cb([{ type: 'attributes', oldValue: 'true', target: { getAttribute: () => 'false' } }]));
+		await sleep(200);
+		t('refetched from the record alone', calls === before + 1);
+		await fire();
+		t('  once, not again on the next quiet batch', calls === before + 1);
+	}
+
 	process.exit(report('dom-streaming') ? 1 : 0);
 })();

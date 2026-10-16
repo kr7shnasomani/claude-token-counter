@@ -4,7 +4,8 @@
 	const CC = (globalThis.ClaudeCounter = globalThis.ClaudeCounter || {});
 
 	CC.DOM = Object.freeze({
-		CHAT_MENU_TRIGGER: '[data-testid="chat-title-split"]',
+		// The newer layout names the same title `session-title-split` (seen 2026-10-15).
+		CHAT_MENU_TRIGGER: '[data-testid="chat-title-split"], [data-testid="session-title-split"]',
 		CHAT_HEADER: '[data-testid="chat-header"]',
 		HEADER_FALLBACK: 'header',
 		// Claude's top-right action group (page icon, Share). The export button sits
@@ -18,12 +19,13 @@
 		// Set by the page itself on a reply that is still being written. Present on
 		// layouts that send over their own RPC rather than a /completion stream.
 		STREAMING: '[data-is-streaming="true"]',
+		// What replaces the composer once a free account is out of messages (seen 2026-10-14).
+		LIMIT_PANEL: '[data-testid="free-limit-panel"]',
 		CHAT_INPUT: '[data-testid="chat-input"]',
 		// Claude names the composer in its own design-system attribute, which is a
 		// far better anchor than either a utility class or a shape heuristic. The
 		// other two remain as fallbacks for layouts that predate it.
-		COMPOSER_CARD: '[data-cds="ChatComposer"], [class*="rounded-composer"]',
-		BRIDGE_SCRIPT_ID: 'cc-bridge-script'
+		COMPOSER_CARD: '[data-cds="ChatComposer"], [class*="rounded-composer"]'
 	});
 
 	CC.SETTINGS_KEY = 'cc:settings';
@@ -86,7 +88,9 @@
 	 */
 	CC.usageWindow = (w, fromEvent = false) => {
 		if (!w || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) return null;
-		const utilization = Math.max(0, Math.min(100, fromEvent ? w.utilization * 100 : w.utilization));
+		// A window that has bound can still say 0.98; its status is what says it is spent.
+		const utilization = w.status === 'exceeded_limit' ? 100
+			: Math.max(0, Math.min(100, fromEvent ? w.utilization * 100 : w.utilization));
 		const r = w.resets_at;
 		// A finite number can still be out of range for a date, and toISOString throws on one.
 		const eventMs = typeof r === 'number' ? r * 1000 : NaN;
@@ -95,6 +99,13 @@
 			: (typeof r === 'string' ? r : null);
 		return { utilization, resets_at };
 	};
+
+	/**
+	 * Has this window's reset already passed? Then its figure is not old but wrong:
+	 * the window has rolled over. One rule for the page and the popup. A window with
+	 * no readable reset time has not ended.
+	 */
+	CC.windowEnded = (w) => !!w?.resets_at && Date.parse(w.resets_at) <= Date.now();
 
 	/**
 	 * Weekly limits that apply to one model rather than the account, from the
@@ -143,6 +154,11 @@
 		// How long to wait before re-reading a conversation whose tree did not yet
 		// include the reply when its stream closed.
 		REPLY_SETTLE_RETRY_MS: 1500,
+		// A usage answer that still carries a window which already ended is asked again.
+		USAGE_ROLLOVER_RETRY_MS: 30000,
+		// A reply's end is reported by the stream and by the page's own flag; a second
+		// report within this long of the first is the same reply.
+		SIGNAL_OVERLAP_MS: 2000,
 		// A chat that has produced no count yet is looked at again this often, this many
 		// times, rather than left blank (see main.js tick).
 		EMPTY_REFRESH_MS: 5000,

@@ -10,17 +10,18 @@
 	// GitHub does not publish its limit; long links fail at around 8 KB.
 	const MAX_ISSUE_URL = 7000;
 
-	/** "resets 4h" / "resets 6d" / "resets 12m" - coarse, like Claude's own panel. */
+	/** "resets 12m" / "resets 4h 12m" / "resets 6d" - the two largest units, a zero second one left out. */
 	function formatReset(iso) {
 		const ms = Date.parse(iso);
 		if (!Number.isFinite(ms)) return '';
 		const diff = ms - Date.now();
 		if (diff <= 0) return ' · resetting';
-		const minutes = Math.round(diff / 60000);
+		const minutes = Math.ceil(diff / 60000);
 		if (minutes < 60) return ` · resets ${minutes}m`;
-		const hours = Math.round(minutes / 60);
-		if (hours < 24) return ` · resets ${hours}h`;
-		return ` · resets ${Math.round(hours / 24)}d`;
+		const hours = Math.floor(minutes / 60);
+		const pair = (big, small, a, b) => ` · resets ${big}${a}${small ? ` ${small}${b}` : ''}`;
+		if (hours < 24) return pair(hours, minutes % 60, 'h', 'm');
+		return pair(Math.floor(hours / 24), hours % 24, 'd', 'h');
 	}
 
 	function ordinal(n) {
@@ -41,8 +42,7 @@
 
 		// Past its reset, the stored figure is not just old - it is wrong, because the
 		// window has rolled over since. Report it as out of date rather than guessing.
-		const resetMs = Date.parse(win.resets_at);
-		if (Number.isFinite(resetMs) && resetMs <= Date.now()) {
+		if (CC.windowEnded(win)) {
 			valueEl.textContent = 'out of date';
 			fillEl.style.width = '0%';
 			fillEl.classList.remove('caution', 'warn');
@@ -288,7 +288,9 @@
 		const lines = [
 			`Claude build: ${d.build || 'unknown'}${d.buildDate ? ` (${d.buildDate})` : ''}, colors ${d.colors || 'unknown'}`,
 			`Layout: composer=${d.composer || 'none'}, header=${d.header || 'none'}, export=${d.exportAt || 'header'}, cds-root=${yn(d.cdsRoot)}`,
-			`Shown: tokens=${yn(d.tokens)} timer=${yn(d.timer)} usageRow=${yn(d.usageRow)} export=${yn(d.exportBtn)}`
+			`Shown: tokens=${yn(d.tokens)} timer=${yn(d.timer)} usageRow=${yn(d.usageRow)} export=${yn(d.exportBtn)}`,
+			// The first question about missing usage: which route this account's layout feeds.
+			`Usage from: ${d.usageFrom || 'unknown'}`
 		];
 		if (Array.isArray(d.floating) && d.floating.length) lines.push(`Floating, no place found: ${d.floating.join(', ')}`);
 		if (Array.isArray(d.disabled) && d.disabled.length) lines.push(`Turned off in settings: ${d.disabled.join(', ')}`);
@@ -320,11 +322,14 @@
 		// GitHub answers an over-long URL with 414 and no form, and encoding makes
 		// non-Latin text nine times longer. Trim the description to fit, and keep the
 		// draft when it was trimmed, so the full text is never lost.
-		const build = (text) => `${ISSUES_URL}?title=${encodeURIComponent(description.split('\n')[0].slice(0, 70))}&body=${encodeURIComponent(`${text}\n\n---\n${facts.join('\n')}\n`)}`;
+		// Cut by character, not UTF-16 unit: half an emoji is a lone surrogate, and
+		// encodeURIComponent throws on one, so the button did nothing.
+		const cut = (text, n) => Array.from(text).slice(0, n).join('');
+		const build = (text) => `${ISSUES_URL}?title=${encodeURIComponent(cut(description.split('\n')[0], 70))}&body=${encodeURIComponent(`${text}\n\n---\n${facts.join('\n')}\n`)}`;
 		let sent = description;
 		let url = build(sent);
 		while (url.length > MAX_ISSUE_URL && sent.length > 1) {
-			sent = sent.slice(0, Math.floor(sent.length * 0.9));
+			sent = cut(sent, Math.floor(Array.from(sent).length * 0.9));
 			url = build(`${sent}\n\n[cut to fit the link; paste the rest from the extension's feedback box]`);
 		}
 

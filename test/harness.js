@@ -35,7 +35,9 @@ class El {
 		this.classList._s = new Set(String(v).split(/\s+/).filter(Boolean));
 	}
 	get className() { return [...this.classList._s].join(' '); }
-	appendChild(c) { this._text = null; c.parentElement = this; this.children.push(c); return c; }
+	// A node has one parent: appending moves it, as in a real document. The shim
+	// once kept it in both, which hid a row left behind in its old place.
+	appendChild(c) { if (c.parentElement) c.remove(); this._text = null; c.parentElement = this; this.children.push(c); return c; }
 	append(...c) { for (const x of c) this.appendChild(x); }
 	prepend(c) { this._text = null; c.parentElement = this; this.children.unshift(c); }
 	replaceChildren(...c) { this._text = null; for (const x of c) x.parentElement = this; this.children = c; }
@@ -45,6 +47,7 @@ class El {
 		this.parentElement = null;
 	}
 	get firstElementChild() { return this.children[0] || null; }
+	get firstChild() { return this.children[0] || null; }
 	get nextElementSibling() {
 		const sibs = this.parentElement ? this.parentElement.children : [];
 		return sibs[sibs.indexOf(this) + 1] || null;
@@ -57,6 +60,7 @@ class El {
 		if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
 		return c;
 	}
+	after(n) { const p = this.parentElement; if (p) p.insertBefore(n, this.nextElementSibling); }
 	cloneNode() { const c = new El(this.tag); c.className = this.className; return c; }
 	setAttribute(k, v) { this.attrs[k] = v; }
 	getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
@@ -143,7 +147,6 @@ function fakeStorage(items = {}) {
 			},
 			onChanged: { addListener() {} }
 		},
-		runtime: { getURL: (p) => 'chrome-extension://test/' + p, id: 'test' },
 		_store: store
 	};
 }

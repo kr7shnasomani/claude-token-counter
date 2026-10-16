@@ -23,12 +23,17 @@ ships no runtime dependencies and that is deliberate.
 claude.ai's own network traffic is invisible to a normal content script, so the
 extension is split:
 
-- `src/injected/bridge.js` runs in the **page's own world**. It is injected as a
-  `<script src>` by `bridge-client.js` and patches `window.fetch` and
-  `history.pushState`/`replaceState`. The manifest sets no `run_at`, so this happens
-  at document idle, after the app has started: it sees every request claude.ai makes
-  from then on, including the SSE stream, and `handleUrlChange` fetches the first
-  conversation itself rather than rely on having seen the page's own load.
+- `src/injected/bridge.js` runs in the **page's own world**. The manifest declares
+  it as a content script with `world: "MAIN"` and `run_at: "document_start"`, so it
+  patches `window.fetch` and `history.pushState`/`replaceState` before claude.ai's
+  first script runs. That order matters: claude.ai's network code keeps the `fetch`
+  it finds (seen 2026-10-15: a tap added after load never saw the timeline stream
+  reconnect), so a bridge that arrived later, as the old `<script src>` injection at
+  document idle did, could go blind without anything failing. Nothing is
+  web-accessible any more. The bridge is in place before the content script exists,
+  so what it saw in that time (the org id) it posts again when the content script
+  greets it (`cc:hello`); `handleUrlChange` still fetches the first conversation
+  itself.
 - `src/content/*.js` runs in the **isolated content script world** and owns all
   UI.
 
@@ -48,14 +53,19 @@ three tiers: `[data-cds="ChatComposer"]`, Claude's own design-system attribute;
 then a `rounded-composer` class, which exists only on some variants; then by
 *shape* — the nearest ancestor of `[data-testid="chat-input"]` that is a flex
 column with a corner radius and a painted background. The header has its own
-three-tier fallback (`chat-title-split` → `chat-header` → semantic `<header>`).
+three-tier fallback (`chat-title-split`, or `session-title-split` on the newer layout
+(seen 2026-10-15) → `chat-header` → semantic `<header>`).
 Do not replace either with a single selector; that is exactly what broke before.
 The composer tiers are not covered by a test — they need a real page — and the
 header tiers are tested only for being reachable, not for how they look, so these
 are the most fragile code here.
+The usage row wraps (`flex-wrap`, each group `flex: 1 1 240px`) rather than overlap:
+at phone width the two labels ran into each other and the bars shrank to nothing
+(seen 2026-10-15 on a 390px window; one line from about 520px of composer up).
 
-**Every header tier must be reachable.** `attachHeader` falls back from
-`chat-title-split` to `chat-header` to a semantic `<header>`. It used to run only
+**Every header tier must be reachable.** `attachHeader` falls back from the
+title testid (`chat-title-split` or `session-title-split`) to `chat-header` to a
+semantic `<header>`. It used to run only
 once a waiter had seen the title testid, so on a layout without it the fallbacks
 were unreachable and the counter and timer never appeared while the composer's
 usage row did (reports filed as `Claude UI: class`). There are no waiters now:
@@ -66,19 +76,35 @@ during streaming is hundreds a second) and schedules one retry when a batch fell
 inside that window, because an idle page sends no second batch to look again on.
 `test/header-attach.test.js` pins each tier from the observer, and the retry.
 
-**There are two ways to learn a reply has finished, and the newer layout only
-has one.** The older layout streams the reply from a `/completion` request the
-bridge can read. The newer one sends over its own RPC (`PerformAction`) and
-writes the reply to a connection opened earlier (`StreamTimeline`, Connect
-protobuf), so the bridge never sees a reply start or end and the token count and
-cache timer froze after the first message. The page marks a reply in progress
-with `data-is-streaming="true"` on the assistant message (and `aria-busy` on the
-send button): `main.js` `watchStreaming()` watches that attribute, so it works
-in every language, and refetches when it clears. It stands down for two seconds
-after a bridge-announced end so a layout with both does not fetch twice. Usage is
-refreshed over REST after each such reply, since the stream's `message_limit`
-event is not readable here (free tier, whose REST usage is null, therefore does
-not update live on the newer layout). `test/dom-streaming.test.js` covers it.
+**Two layouts, two transports, and each has its own reply and usage signals.**
+The older layout streams the reply from a `/completion` request (SSE): its close is
+the reply's end and its `message_limit` event is usage. The newer one (a
+`bardhub-claudechat-root` page) sends with a Connect RPC, `PerformAction`, and
+receives everything on a long-lived `StreamTimeline` stream (Connect framing,
+protobuf, often gzip per frame). The bridge reads a clone of that stream with a
+minimal decoder for two paths only (`handleTimeline`, `timelineEvent`; field
+numbers from claude.ai's schema of 2026-10-07, checked against real frames on
+2026-10-15): the conversation's status, whose busy-to-ended edge is posted as
+`cc:generation_end` (start as `cc:generation_start`, both naming the conversation,
+since a stream can belong to another chat), and `message_limit`, posted in the SSE
+shape with `via: 'timeline'`. On the free plan REST usage is null, so for a free
+account on the newer layout the stream is the only usage source; until it was read
+such accounts had no usage at all (reports from 2026-10-11 on). A send refused at
+the limit carries the same object JSON-encoded in `error.message`
+(`handleRefusal`), and a window whose status is exceeded reads as 100%, since its
+utilization can say 0.98. As a second, DOM-level signal `main.js`
+`watchStreaming()` watches `data-is-streaming="true"` on the assistant message
+(language-independent) and refetches when it clears; it reads the mutation
+records' old values too, because a one-word reply turned the flag on and off
+between two looks and was missed (seen 2026-10-15). Both report one reply, so
+whichever comes second within `SIGNAL_OVERLAP_MS` (two seconds) is dropped, in
+either order, and the page's signal also refreshes usage over REST after a reply. `test/dom-streaming.test.js` and
+`test/live-refresh.test.js` cover these with real wire bytes. The reader is built to
+survive what it cannot predict: a message that does not decode is skipped rather
+than ending the read, a length beyond `MAX_FRAME_BYTES` (framing out of step) stops
+it instead of buffering forever, a stream cut mid-reply still ends the wait, and its
+buffer grows by doubling, since a long chat's first message is the whole
+conversation (a 3 MB message in 4 KB chunks is a test).
 
 **The extension must stay visible whatever claude.ai does.** `ui._ensureShown()`
 runs every tick: a header counter or usage row that has something to show but
@@ -90,6 +116,11 @@ the test shim) a part counts as painted. It floats only where there is a chat (a
 `/chat/` path or a chat input on the page): sign-in, settings and the like have no
 composer because they are not chats, and the usage pill used to appear over them
 (seen on `/oauth/authorize`); a floating part is taken down on leaving for one. Reports list what floated.
+A free account out of messages has no composer either: Claude puts a notice in its place
+(`[data-testid="free-limit-panel"]`, seen 2026-10-14) and the pill used to float over the
+disclaimer below it. The row now goes right after that notice (`composer=limit` and
+`Claude UI: limit` in reports; `CC.uiVariant === 'limit'` is the only state) and moves
+home when the composer returns; how it sits there needs a real page.
 `test/always-shown.test.js` covers it.
 
 **The export button sits beside Claude's top-right controls, never inside them.**
@@ -120,7 +151,10 @@ hands it back to the button: the menu sits at the end of `document.body`.
 `--cc-*` custom properties on `:root` and overrides them under
 `html[data-mode="dark"]`, so a theme change needs no code. Do not set colours
 from JS. The docked export button's size and icon size are stylesheet rules too
-(`.cc-exportBtn--docked`). Whether a colour is *right* needs a real page; `composer.html`
+(`.cc-exportBtn--docked`); its colour is inherited from the header at full opacity,
+as Claude's own icon buttons beside it are, and its hover reads Claude's
+`--cds-fill-ghost-hover` (at 70% opacity in our own colour it read visibly greyer
+than its neighbours, seen 2026-10-16). Whether a colour is *right* needs a real page; `composer.html`
 (below) renders every coloured part, and flipping `data-mode` on it is the check.
 
 **The counter and timer are one chip, and their labels are not drawn.** The
@@ -146,12 +180,13 @@ is followed for free. The popup's `[data-tip]` labels use the same spec.
 Re-measure when Claude changes it: open its "+" menu and hover a sidebar button.
 
 **The context sizes in the popover are sourced, not remembered.** They are by
-family (the newest version of each) and were checked on 2026-10-07 against
+family (the newest version of each) and were checked on 2026-10-15 against
 Anthropic's help article "How large is the context window on paid Claude plans?"
-and claude.com/pricing: Fable, Opus and Sonnet 1M, Haiku 200K, older versions
-200K-500K by version. Free has Sonnet and Haiku only, with the same windows as
-paid; the article itself covers paid plans only, so the Free column rests on the
-pricing page. A third-party claim of "Free = 200K" and the extension's own earlier
+and claude.com/pricing: Fable, Opus, Sonnet and Haiku (5.5, out 2026-10-07) 1M in
+chat, older versions 200K-500K by version. The article's table has a column per
+surface; Haiku 5.5's 500K is Cowork's, not chat's. Free has Sonnet and Haiku only,
+with the same windows as paid; the article itself covers paid plans only, so the
+Free column rests on the pricing page. A third-party claim of "Free = 200K" and the extension's own earlier
 "Free plan: 200K" are not supported by either. Re-check when a model ships.
 
 A tooltip that offers an action (the token counter's "Click for details") is
@@ -180,19 +215,28 @@ refresh counts the whole trunk. A per-message cache used to key on a SHA-256 tha
 had to be fetched from the page world one `postMessage` round trip per message,
 which cost far more than the counting it saved.
 
-**A number on screen must belong to what is on screen.** Three cases once did not, and
-`test/wrong-data.test.js` pins them. The stored snapshot is seeded only when its `orgId`
-is this org's: after switching account, a plan that reports nothing on demand kept the
-other account's bars. A window whose reset passes while the page is open is cleared to
+**A number on screen must belong to what is on screen.** Each case here once did not,
+and `test/wrong-data.test.js` pins them. The stored snapshot is seeded only when its
+`orgId` is this org's, and not before an org id is known (it is tried again when the
+bridge names the org): after switching account, a plan that reports nothing on
+demand kept the other account's bars. A window whose reset has passed is dropped by
+`applyUsageUpdate` whichever source sent it. A window whose reset passes while the page is open is cleared to
 "—" before the refresh, which on such a plan returns nothing and left "92% (resets in
 0s)" standing. And a navigation clears the count before fetching the new chat's, or a
 failed fetch left the last chat's on it. An empty-but-successful usage answer is asked
-again hourly, not on the five-minute retry meant for failures.
+again hourly, not on the five-minute retry meant for failures, nor on every
+navigation. A usage answer that was in flight when a reply's stream brought a newer
+reading is dropped, not applied over it. An answer still carrying a window that has
+already ended (the server just after a rollover) shows that window as "—" and asks
+again in `USAGE_ROLLOVER_RETRY_MS`, up to three times, instead of latching "resets in
+0s". A reply start or end for another chat than the one on screen is ignored.
 
 **The plan travels with the diagnostics, not the usage snapshot.** The snapshot
 is written only once an account reports usage, so a plan kept there was
 "unknown" in every free-tier report (issue 9 on 1.0.10: `Plan: unknown`, `Claude
-UI: unknown`). `publishDiagnostics` resolves the plan itself (three attempts, only
+UI: unknown`). `resolvePlanLabel` is shared and bounded (three attempts in all, one at a time,
+whoever asks), and an answer with no organisation in it is no plan rather than FREE.
+`publishDiagnostics` resolves the plan itself (three attempts, only
 once an org id exists, never guessed as FREE) and the popup falls back to it. When
 *both* lines are unknown the popup now says no claude.ai tab has reported: a tab
 open before install is not injected until reloaded. `test/plan.test.js` covers it.
@@ -203,7 +247,11 @@ would misroute reports if anyone claimed that name.
 `cc:diag` (its own key - the usage snapshot is never written for free accounts
 with no usage) and the popup appends it to the issue: Claude's build id/date from
 `<html data-build-id>`, composer and header tier, which parts are actually
-painted, and the last five swallowed errors. Plain facts only, never ids or
+painted, and the last five swallowed errors. `usageFrom` (its own `Usage from:` line)
+says which path the last usage reading came by: `usage` (REST), `sse` (completion
+stream), `timeline` (the newer layout's stream), `refusal` (a send refused at the
+limit) or `none`, the first thing a "usage not showing" report needs. A `via` the
+bridge did not set is read as `sse`, so a page script cannot write into a report. Plain facts only, never ids or
 conversation text. Claude has no public UI-version name; build id plus the tier
 labels is the best identifier available.
 
@@ -226,7 +274,8 @@ calls, so it is not a wrong-org bug; and every field of the full `/usage`
 response is `null`, including the newer `limits` array (`[]`), which some forks
 read as a fallback. If free-tier usage ever seems to reappear, re-dump the whole
 response rather than just `five_hour`/`seven_day`. The row shows an explanatory
-hint rather than sitting blank. A stored window whose `resets_at` has passed is
+hint rather than sitting blank. Whether a window has ended is one rule,
+`CC.windowEnded`, shared by the page and the popup. A stored window whose `resets_at` has passed is
 dropped; one that has not is kept, because usage only rises between messages, so
 it is a floor rather than a stale figure. A window with no current reading keeps
 its slot marked `—` rather than vanishing, so the row never collapses to a lone
@@ -278,8 +327,9 @@ faster than the clock", which is a question you ask while working in a
 conversation; the popup is a glance at where the limits stand. Adding one for
 consistency is a change to make on purpose, not a gap to close.
 
-**The version lives in two places** — `manifest.json` and `package.json`. CI and
-the release workflow both refuse to proceed if they disagree.
+**The version lives in three places** — `manifest.json`, `package.json` and
+`package-lock.json` (its top and its root package). `test/packaging.test.js`
+fails if they disagree, and CI and the release workflow run it.
 
 ## Conversation data
 
@@ -287,6 +337,23 @@ the release workflow both refuse to proceed if they disagree.
 `current_leaf_message_uuid` through each `parent_message_uuid`. claude.ai stores
 every edit and every abandoned retry in one flat `chat_messages` array, so this
 walk is what separates the conversation as it reads from its dead ends.
+After an automatic compaction the model sees Claude's summary, not the turns it
+replaced, so the count starts from the last trunk message carrying
+`compaction_summary` (an array of text blocks, seen 2026-10-15) and adds the
+summary text. The count is still well under Claude's own: the conversation JSON has
+no thinking text on 5-series models (only short `summaries`, while preserved thinking
+stays in context), no system prompt or tools, and claude.ai's tokenizer for newer
+models yields more tokens than `o200k_base`. Compaction points read off a real
+account on 2026-10-15 fell anywhere from 13K to 294K characters of visible text, so
+no multiplier on the visible count predicts compaction; do not add one as if it did.
+Claude's exact figure exists but cannot be had on demand: the newer layout's
+`message_limit` has a `context_breakdown` (field 16: used, window and auto-compact
+threshold tokens; field 14 the same as JSON) that feeds a hidden "context ring" in
+claude.ai's own code, yet on 2026-10-15/16 it never arrived, not even on a Sonnet 4.6
+chat about half full. Nothing a client sends asks for it (no capability flag, no
+`/context` request), and the older layout's SSE has no such field. Reading it when
+present was built and taken out again: a count that switched source mid-chat would
+jump. `test/tokens.test.js` covers the compaction rule.
 `export.js` reuses the same walk, and additionally replays `str_replace` edits
 onto files created by `create_file` so an exported file matches the version that
 was actually used rather than the one first written. The classic `artifacts` tool
@@ -304,8 +371,8 @@ keys, settings defaults, plan labels, `getStorage`/`storageGet` and the usage-wi
 normaliser (`CC.usageWindow`) exist once and are shared, not mirrored.
 The content script mirrors each usage reading into `chrome.storage.local`
 (`cc:usageSnapshot`); the popup renders that snapshot with a timestamp. Pressing
-refresh requests the optional claude.ai host permission at that moment, so a
-fresh install shows no permission warning.
+refresh requests the optional claude.ai host permission at that moment, so the
+popup asks for nothing at install.
 
 Settings (`cc:settings`) are written by the popup and applied by
 `ui.applySettings()` via `storage.onChanged`, so open tabs update without a
@@ -317,16 +384,23 @@ reveal a row that has no data behind it.
 `test/harness.js` runs the real content scripts in Node against a small DOM
 shim, so the suites exercise shipped code rather than a copy. When a test fails
 in a way that looks impossible, suspect the shim before the code — it has been
-wrong three times: `classList` not reflecting `className`, a missing
-`createElementNS`, and the reverse of the first — `className` not reflecting
+wrong four times: `classList` not reflecting `className`, a missing
+`createElementNS`, the reverse of the first — `className` not reflecting
 later `classList` mutations, which let a snapshot record a marker as hidden
-while `classList` reported it visible. The set is the single source of truth now
-and the string derives from it, as in a real element.
+while `classList` reported it visible (the set is the single source of truth now
+and the string derives from it, as in a real element) — and `appendChild` leaving
+a node in its old parent as well, which hid a usage row stranded beside the limit
+notice. The shim has `after` too, as the code uses it.
 
 `test/security.test.js` is a guard, not documentation: it fails on `eval`,
-`innerHTML`, widened permissions, an unpinned action, a lockfile entry without an
-integrity hash, an install that could run lifecycle scripts, or a vendored tokenizer
-whose SHA-256 is not the one in `THIRD_PARTY_NOTICES.md`.
+`innerHTML`, widened permissions, anything web-accessible, a page-world script
+other than the bridge or one not loaded at `document_start`, a Chrome or Firefox
+floor below where that works (111, 128), an id pattern in the bridge or popup that
+would let an id leave its URL path (it tests the shipped patterns, not a copy), an
+unpinned action, a lockfile entry without an integrity hash, an install that could
+run lifecycle scripts, or a vendored tokenizer whose SHA-256 is not the one in
+`THIRD_PARTY_NOTICES.md`. The scripts it scans come from the manifest and
+`popup.html`, so a new file is covered without being listed.
 
 `test/inventory.test.js` exists because the elapsed-time marker was deleted in a
 3,800-line release commit and shipped missing: every other suite tests a
@@ -372,6 +446,7 @@ It is not part of `npm test` and does not run in CI — there is no browser ther
 
 ## Permissions
 
-`storage` only, with `https://claude.ai/*` as an *optional* host permission.
-Nothing at install time triggers a warning. Widening this is a product decision,
+`storage` only, with `https://claude.ai/*` as an *optional* host permission. The
+content scripts run on `https://claude.ai/*` only, which is the site access a
+browser lists at install. Widening any of this is a product decision,
 not a refactor, and CI asserts the current values.

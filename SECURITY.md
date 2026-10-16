@@ -11,9 +11,9 @@ You can expect an acknowledgement within a few days.
 
 ## What this extension can access
 
-It runs only on `https://claude.ai/*`. It requests one permission, `storage`.
-Access to claude.ai itself is optional and requested at the moment you press
-refresh in the popup, so a fresh install shows no permission warning.
+It runs only on `https://claude.ai/*`, the one site the browser lists it as able
+to access. It requests one permission, `storage`. The popup's own access to
+claude.ai is optional and requested at the moment you press refresh there.
 
 Everything runs locally. Nothing is sent anywhere except to claude.ai, and the
 requests it makes are the same ones the site already makes for itself.
@@ -26,7 +26,8 @@ Four keys in local extension storage, never transmitted:
   and which Claude layout was detected
 - `cc:settings` — which on-page elements you have switched off
 - `cc:diag` — Claude's build number, the detected layout, your plan label, which
-  of the extension's elements are showing, and the last few error messages. No
+  of the extension's elements are showing, where the last usage reading came
+  from, and the last few error messages. No
   ids or conversation text; shown to you in a bug report only if you file one
 - `cc:feedbackDraft` — an unsent bug report, cleared once the issue is opened
 
@@ -35,8 +36,9 @@ download and are never uploaded.
 
 ## Boundaries in the code
 
-- The injected bridge accepts messages only from its own window, and addresses
-  replies to the page's own origin instead of broadcasting them
+- The page-world bridge accepts messages only from its own window, and addresses
+  replies to the page's own origin instead of broadcasting them. Nothing in the
+  extension is web-accessible, so no page can load its files
 - Organisation and conversation ids are pattern-checked before reaching a URL,
   so a crafted message cannot redirect a request to another endpoint
 - No `eval`, no `new Function`, no `innerHTML` in shipped code

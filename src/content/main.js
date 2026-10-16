@@ -69,6 +69,11 @@
 	// The usage endpoint answered, with no windows (free tier). Asked again hourly,
 	// not on the five-minute retry meant for a failed request.
 	let usageEmpty = false;
+	// Where the last reading came from, for bug reports: which of the three paths
+	// this account's layout actually feeds is the first thing a report needs.
+	let usageSource = 'none';
+	// A usage answer still carrying an ended window is asked again, this many times.
+	let expiredRetries = 0;
 	const rolloverHandledForResetMs = { five_hour: null, seven_day: null };
 
 	const ui = new CC.ui.CounterUI({
@@ -77,15 +82,21 @@
 	});
 	ui.initialize();
 
-	// Bridge must be ready before we can make requests
-	const bridgeReady = CC.injectBridgeOnce();
+	// The bridge has been running since document_start; greet it so it repeats what
+	// it saw before this script was listening.
+	CC.connectBridge();
 
 	function applyUsageUpdate(normalized, source) {
 		if (!normalized) return;
+		// A window whose reset has passed is wrong, whichever source sent it.
+		for (const key of ['five_hour', 'seven_day']) {
+			if (CC.windowEnded(normalized[key])) normalized = { ...normalized, [key]: null };
+		}
 		const now = Date.now();
 		const seeded = source === 'snapshot';
 		usageState = normalized;
 		usageIsSeeded = seeded;
+		if (!seeded) usageSource = source;
 		// Deliberately not stamped for a seed: the freshness clocks drive the
 		// safety refresh, and stale numbers must not hold it off for an hour.
 		if (!seeded) lastUsageUpdateMs = now;
@@ -99,6 +110,8 @@
 	function updateOrgIdIfNeeded(newOrgId) {
 		if (newOrgId && typeof newOrgId === 'string' && newOrgId !== currentOrgId) {
 			currentOrgId = newOrgId;
+			// What the last org answered says nothing about this one.
+			usageEmpty = false;
 		}
 	}
 
@@ -110,7 +123,6 @@
 	}
 
 	async function refreshUsage() {
-		await bridgeReady;
 		// Recorded even when the fetch fails or the payload is unusable, so the
 		// safety refresh below backs off instead of retrying every second.
 		lastUsageAttemptMs = Date.now();
@@ -119,6 +131,7 @@
 
 		if (usageFetchInFlight) return;
 		usageFetchInFlight = true;
+		const askedAt = Date.now();
 		let raw;
 		try {
 			raw = await CC.bridge.requestUsage(orgId);
@@ -128,11 +141,22 @@
 			usageFetchInFlight = false;
 		}
 
+		// A reading from a reply's stream that landed while this was in flight is newer.
+		if (lastUsageUpdateMs > askedAt) return;
 		const parsed = parseUsageFromUsageEndpoint(raw);
 		// A successful response carrying no windows is an answer, not a failure: this
 		// plan does not publish usage until a message has been sent.
 		usageEmpty = !parsed;
 		if (!parsed) ui.markUsageUnavailable();
+		// Just after a rollover the server can still answer with the window that
+		// ended. Shown, it read "resets in 0s" and latched; ask again shortly instead.
+		const expired = parsed && ['five_hour', 'seven_day'].filter((k) => CC.windowEnded(parsed[k]));
+		if (expired?.length) {
+			for (const k of expired) parsed[k] = null;
+			if (expiredRetries++ < 3) setTimeout(refreshUsage, CC.CONST.USAGE_ROLLOVER_RETRY_MS);
+		} else if (parsed) {
+			expiredRetries = 0;
+		}
 		applyUsageUpdate(parsed, 'usage');
 	}
 
@@ -143,23 +167,32 @@
 
 	let planLabel = null;
 	let planAttempts = 0;
-	let planInFlight = false;
+	const MAX_PLAN_ATTEMPTS = 3;
 
-	async function resolvePlanLabel() {
-		if (planLabel) return planLabel;
+	// Bounded and shared: every usage reading asks for the plan, and an
+	// /organizations that keeps failing must not be asked again for each of them.
+	let planPromise = null;
+	function resolvePlanLabel() {
+		if (planLabel) return Promise.resolve(planLabel);
+		if (planPromise) return planPromise;
 		const orgId = resolveOrgId();
-		if (!orgId) return null;
+		if (!orgId || planAttempts >= MAX_PLAN_ATTEMPTS) return Promise.resolve(null);
 		planAttempts += 1;
-		await bridgeReady;
-		try {
-			const orgs = await CC.bridge.requestOrgs();
-			const list = Array.isArray(orgs) ? orgs : [orgs];
-			const org = list.find((o) => o?.uuid === orgId) || list[0];
-			planLabel = CC.planFromOrg(org);
-		} catch {
-			planLabel = null;
-		}
-		return planLabel;
+		planPromise = (async () => {
+			try {
+				const orgs = await CC.bridge.requestOrgs();
+				const list = (Array.isArray(orgs) ? orgs : [orgs]).filter((o) => o && typeof o === 'object');
+				const org = list.find((o) => o.uuid === orgId) || list[0];
+				// No org in the answer is not evidence of a free plan.
+				planLabel = org ? CC.planFromOrg(org) : null;
+			} catch {
+				planLabel = null;
+			}
+			return planLabel;
+		})();
+		// Cleared once settled, never from inside: that could run before this assignment.
+		planPromise.finally(() => { planPromise = null; });
+		return planPromise;
 	}
 
 	// The message stream carries no per-model limits, so a reading that came from it
@@ -194,20 +227,17 @@
 	// layout never do - they are the reports that most need these facts. That
 	// includes the plan itself: the snapshot used to be its only home, so a free
 	// account's bug report always said "Plan: unknown".
-	const MAX_PLAN_ATTEMPTS = 3;
 	let lastDiag = '';
 	function publishDiagnostics() {
 		const storage = CC.getStorage();
 		if (!storage) return;
-		if (!planLabel && !planInFlight && planAttempts < MAX_PLAN_ATTEMPTS) {
-			planInFlight = true;
+		if (!planLabel && !planPromise) {
 			resolvePlanLabel().then((plan) => {
-				planInFlight = false;
 				if (plan) publishDiagnostics();
 			});
 		}
 		try {
-			const diag = { ...ui.getDiagnostics(), plan: planLabel };
+			const diag = { ...ui.getDiagnostics(), plan: planLabel, usageFrom: usageSource };
 			const text = JSON.stringify(diag);
 			if (text === lastDiag) return;
 			lastDiag = text;
@@ -233,8 +263,9 @@
 		if (!snapshot || usageState) return;
 		// Usage belongs to an organisation. After switching account or org the stored
 		// reading is someone else's, and on a plan that reports nothing it would stay.
+		// With no org id to compare yet, it may be someone else's too.
 		const orgId = resolveOrgId();
-		if (snapshot.orgId && orgId && snapshot.orgId !== orgId) return;
+		if (!orgId || snapshot.orgId !== orgId) return;
 		// Per-model limits are only ever read from the usage endpoint; keep the last
 		// ones so a reading from the message stream does not overwrite them with none.
 		if (Array.isArray(snapshot.scoped)) lastScoped = snapshot.scoped;
@@ -244,8 +275,7 @@
 		// is unknowable until then. One that has not reset is still correct, because
 		// usage only advances when a message is sent - so it is a floor, never an
 		// overstatement. Keep those, drop the rest.
-		const current = (w) =>
-			!!w && typeof w.utilization === 'number' && !!w.resets_at && Date.parse(w.resets_at) > Date.now();
+		const current = (w) => typeof w?.utilization === 'number' && Number.isFinite(Date.parse(w.resets_at)) && !CC.windowEnded(w);
 
 		const five_hour = current(snapshot.five_hour) ? snapshot.five_hour : null;
 		const seven_day = current(snapshot.seven_day) ? snapshot.seven_day : null;
@@ -257,12 +287,11 @@
 	/** Fetch the conversation tree through the bridge and fold it into the counter. */
 	async function fetchConversation(orgId, conversationId) {
 		const data = await CC.bridge.requestConversation(orgId, conversationId);
-		handleConversationPayload({ orgId, conversationId, data });
+		await handleConversationPayload({ orgId, conversationId, data });
 		return data;
 	}
 
 	async function refreshConversation() {
-		await bridgeReady;
 		if (!currentConversationId) {
 			ui.setConversationMetrics();
 			return;
@@ -280,7 +309,6 @@
 	}
 
 	async function exportConversation(format) {
-		await bridgeReady;
 		if (!currentConversationId) return;
 
 		const orgId = resolveOrgId();
@@ -292,8 +320,10 @@
 		if (data) CC.exportChat.download(data, format);
 	}
 
-	function handleGenerationStart() {
+	function handleGenerationStart({ conversationId } = {}) {
 		if (!currentConversationId) return;
+		// A timeline stream can belong to another chat than the one on screen.
+		if (conversationId && conversationId !== currentConversationId) return;
 		ui.setPendingCache(true);
 	}
 
@@ -304,9 +334,15 @@
 	 */
 	let lastGenerationEndMs = 0;
 
-	async function handleGenerationEnd({ conversationId } = {}) {
+	let lastPageEndMs = 0;
+
+	async function handleGenerationEnd({ conversationId, fromPage = false } = {}) {
 		if (!currentConversationId) return;
 		if (conversationId && conversationId !== currentConversationId) return;
+		// The page's flag and the stream both report one reply. The page standing down
+		// after the stream is in watchStreaming; this is the other order.
+		if (fromPage) lastPageEndMs = Date.now();
+		else if (Date.now() - lastPageEndMs < CC.CONST.SIGNAL_OVERLAP_MS) return;
 		lastGenerationEndMs = Date.now();
 		emptyRefreshes = 0;
 
@@ -320,35 +356,41 @@
 	}
 
 	/**
-	 * The newer claude.ai sends a message over its own RPC and writes the reply to a
-	 * connection that is already open, so there is no /completion request for the
-	 * bridge to see and no stream of ours to read to the end. Without a signal the
-	 * token count and cache timer froze after the first reply. The page does mark
-	 * a reply that is still being written, in an attribute rather than in words, so
-	 * it holds in every language: watch for that flipping on and off.
+	 * The page's own mark of a reply in progress, as a second signal beside the
+	 * bridge's (a completion stream closing, or the newer layout's timeline going
+	 * idle). It is an attribute rather than words, so it holds in every language, and
+	 * it still works if claude.ai changes how replies travel.
 	 *
-	 * Both signals can fire on a layout that has both; the bridge's is kept, and
-	 * this one stands down for the couple of seconds after it.
+	 * Both signals fire for one reply; this one stands down for the couple of
+	 * seconds after the bridge's, and handleGenerationEnd drops the bridge's when it
+	 * comes second.
 	 */
 	function watchStreaming() {
 		let streaming = false;
 		let scheduled = false;
+		// A short reply can switch the attribute on and off between two looks, and
+		// the reply was then never seen to end (seen on a one-word answer).
+		let sawStreaming = false;
 		const check = () => {
 			scheduled = false;
 			const now = !!document.querySelector(CC.DOM.STREAMING);
-			if (now === streaming) return;
+			const missed = sawStreaming && !now && !streaming;
+			sawStreaming = false;
+			if (now === streaming && !missed) return;
 			streaming = now;
 			if (now) {
 				handleGenerationStart();
 				return;
 			}
-			if (Date.now() - lastGenerationEndMs < 2000) return;
-			handleGenerationEnd();
-			// The message_limit event that normally carries usage does not exist here.
+			if (Date.now() - lastGenerationEndMs < CC.CONST.SIGNAL_OVERLAP_MS) return;
+			handleGenerationEnd({ fromPage: true });
+			// For a layout whose stream carries no usage the bridge could read.
 			refreshUsage();
 		};
 		// Streaming churns the DOM hundreds of times a second; look at most a few.
-		const schedule = () => {
+		const schedule = (records = []) => {
+			// Only attribute records can show the flag flipping; the rest are page churn.
+			if (records.some((r) => r.type === 'attributes' && (r.oldValue === 'true' || r.target.getAttribute('data-is-streaming') === 'true'))) sawStreaming = true;
 			if (scheduled) return;
 			scheduled = true;
 			setTimeout(check, 150);
@@ -357,6 +399,7 @@
 			subtree: true,
 			childList: true,
 			attributes: true,
+			attributeOldValue: true,
 			attributeFilter: ['data-is-streaming']
 		});
 	}
@@ -381,7 +424,8 @@
 
 	function handleMessageLimit(messageLimit) {
 		const parsed = parseUsageFromMessageLimit(messageLimit);
-		applyUsageUpdate(parsed, 'sse');
+		const via = messageLimit?.via;
+		applyUsageUpdate(parsed, via === 'timeline' || via === 'refusal' ? via : 'sse');
 	}
 
 	CC.bridge.on('cc:org', ({ orgId } = {}) => {
@@ -390,6 +434,8 @@
 		// stray request happened to touch.
 		if (currentOrgId) return;
 		updateOrgIdIfNeeded(orgId);
+		// The stored reading could not be matched to an org at load; now it can.
+		if (currentOrgId && !usageState) seedFromSnapshot();
 		if (currentOrgId && !usageState) refreshUsage();
 		// With no readable cookie the first conversation fetch bailed for want of an
 		// org id, so the counter and timer waited for a message that might never
@@ -427,7 +473,8 @@
 		// Usage is org-level, not conversation-level, so fetch it even on /new. This
 		// used to sit after the early return below, which left the popup with nothing
 		// to show until the user opened an actual conversation.
-		if (!usageState || usageIsSeeded) refreshUsage();
+		// A plan that answered with nothing is asked hourly (tick), not per navigation.
+		if ((!usageState && !usageEmpty) || usageIsSeeded) refreshUsage();
 
 		if (!currentConversationId) {
 			ui.setConversationMetrics();

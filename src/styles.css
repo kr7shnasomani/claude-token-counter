@@ -102,6 +102,12 @@ html[data-mode="dark"] {
 	gap: 0.75rem;
 	width: 100%;
 
+	/* A narrow window (split screen, phone) has no room for both windows on one
+	   line: they used to overlap, text over text, with the bars squeezed to
+	   nothing. Each group now takes its own line when the two do not fit. */
+	flex-wrap: wrap;
+	row-gap: 4px;
+
 	position: relative;
 	box-sizing: border-box;
 	margin-top: 4px;
@@ -119,7 +125,9 @@ html[data-mode="dark"] {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	flex: 1;
+	/* Room for the label with its reset time and a usable bar; below this the
+	   row wraps instead of overlapping. */
+	flex: 1 1 240px;
 	min-width: 0;
 }
 
@@ -406,7 +414,9 @@ html[data-mode="dark"] {
 	height: 32px;
 	padding: 0;
 	border-radius: 8px;
-	opacity: 0.7;
+	/* Claude's own icon buttons beside it take the header's colour at full opacity. */
+	color: inherit;
+	opacity: 1;
 }
 
 /* The icon is built at the small size; docked, the stylesheet enlarges it. */
@@ -417,8 +427,7 @@ html[data-mode="dark"] {
 }
 
 .cc-exportBtn--docked:hover {
-	opacity: 1;
-	background: var(--cc-pop-hover);
+	background: var(--cds-fill-ghost-hover, var(--cc-pop-hover));
 }
 
 .cc-exportBtn--busy {

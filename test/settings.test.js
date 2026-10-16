@@ -10,8 +10,9 @@ const past = new Date(Date.now() - 3e6).toISOString();
  * the storage has to exist before the file does.
  */
 async function seedWith(snapshot) {
-	const chrome = fakeStorage(snapshot ? { 'cc:usageSnapshot': snapshot } : {});
-	const c = loadWith({ chrome },
+	// A stored reading belongs to an org, and is only seeded onto that org's page.
+	const chrome = fakeStorage(snapshot ? { 'cc:usageSnapshot': { orgId: 'org-1', ...snapshot } } : {});
+	const c = loadWith({ chrome, setup: (x) => { x.document.cookie = 'lastActiveOrg=org-1'; } },
 		'src/content/constants.js', 'src/content/tokens.js', 'src/content/ui.js',
 		'src/content/bridge-client.js', 'src/content/main.js');
 	// The seed fires during evaluation; await the same call to join it.
@@ -164,6 +165,8 @@ t('weekly shows a dash rather than a stale figure', ui.weeklyUsageSpan.textConte
 		seven_day: { utilization: 34, resets_at: future }
 	});
 	t('a live window is seeded onto the row', live.usage?.five_hour?.utilization === 12);
+	const unreadable = await seedWith({ five_hour: { utilization: 12, resets_at: 'not a date' }, seven_day: null });
+	t('a window whose reset time cannot be read is not seeded', unreadable.usage === null);
 	t('  and marked as a seed, not a reading', live.seeded === true);
 	t('  without stamping the freshness clock', live.updatedAt === 0);
 

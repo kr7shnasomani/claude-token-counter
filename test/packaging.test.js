@@ -15,10 +15,11 @@ t('release attaches only the two zips and checksums',
 	release.includes('claude-token-counter-firefox-*.zip'));
 
 section('manifest still ships every file it declares');
-for (const f of [...manifest.content_scripts[0].js, ...manifest.content_scripts[0].css,
-	...manifest.web_accessible_resources[0].resources, manifest.action.default_popup]) {
+for (const f of [...manifest.content_scripts.flatMap((c) => [...(c.js || []), ...(c.css || [])]), manifest.action.default_popup]) {
 	t('exists: ' + f, fs.existsSync(path.join(ROOT, f)));
 }
+const lock = JSON.parse(read('package-lock.json'));
 t('versions agree', manifest.version === JSON.parse(read('package.json')).version);
+t('  and the lockfile says the same', lock.version === manifest.version && lock.packages[''].version === manifest.version);
 
 process.exit(report('packaging'));

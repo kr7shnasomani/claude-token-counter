@@ -35,17 +35,17 @@
 
 	// Shown in the token counter's popover. Product facts, so they sit in one place.
 	// Context window in the Claude app, by family so a new release does not date
-	// it. Checked 2026-10-07 against Anthropic's help article "How large is the
-	// context window on paid Claude plans?" (paid plans: Fable 5.1, Opus 5.5/5 and
-	// Sonnet 5.5/5 are 1M; Fable 5, Opus 4.x and Sonnet 4.6 are 500K; anything else,
-	// Haiku included, 200K) and claude.com/pricing (Free has Sonnet and Haiku, not
-	// Fable or Opus, and the same window as paid). The figures are the newest
-	// version of each family. [family, free, paid]; a dash is "not on that plan".
+	// it. Checked 2026-10-15 against Anthropic's help article "How large is the
+	// context window on paid Claude plans?" (chat: Fable 5.1, Opus 5.5/5, Sonnet
+	// 5.5/5 and Haiku 5.5 are 1M; Fable 5, Opus 4.x and Sonnet 4.6 are 500K; anything
+	// else 200K) and claude.com/pricing (Free has Sonnet and Haiku, not Fable or
+	// Opus, and the same window as paid). The figures are the newest version of each
+	// family. [family, free, paid]; a dash is "not on that plan".
 	const CONTEXT_SIZES = [
 		['Fable', '\u2014', '1M'],
 		['Opus', '\u2014', '1M'],
 		['Sonnet', '1M', '1M'],
-		['Haiku', '200K', '200K']
+		['Haiku', '1M', '1M']
 	];
 	// Older versions (Free keeps some) differ by version, not plan, so they get one line.
 	const OLDER_MODELS_SIZE = '200K\u2013500K';
@@ -465,7 +465,10 @@
 				const headerFloatRetry = headerFloating && now >= this.floatRetryAt.header;
 				const usageFloatRetry = !!this.usageLine?.classList.contains('cc-floating') && now >= this.floatRetryAt.usage;
 
-				const usageWants = usageMissing || usageFloatRetry;
+				// Beside the notice the row is outside any composer, so the composer coming
+				// back does not take it out of the page; move it home.
+				const usageStranded = CC.uiVariant === 'limit' && !!document.querySelector(CC.DOM.CHAT_INPUT);
+				const usageWants = usageMissing || usageFloatRetry || usageStranded;
 				const headerWants = headerMissing || headerOffTitle || exportStale || headerFloatRetry;
 				const usageDue = now - lastUsageAttempt >= RETRY_MS;
 				const headerDue = now - lastHeaderAttempt >= RETRY_MS;
@@ -486,7 +489,13 @@
 				// A batch that wanted a place but fell inside the throttle may be the one
 				// that brought the anchor, and an idle page sends no second batch. (The
 				// comparisons above are >=: a timer can fire a millisecond early.)
-				if (((usageWants && !usageDue) || (headerWants && !headerDue)) && !retryTimer) {
+				// The title and Claude's controls are only looked for when a check is due,
+				// so a batch inside the window that brought one of them is looked at again too.
+				// Only while the page is still settling after a navigation (the export hold):
+				// after that, a layout without a title or controls would retry forever.
+				const lookAgain = !checkDue && !headerMissing && now < this.exportHoldUntil &&
+					(this.headerTier !== 'title' || !this.exportDocked);
+				if (((usageWants && !usageDue) || (headerWants && !headerDue) || lookAgain) && !retryTimer) {
 					retryTimer = setTimeout(check, RETRY_MS);
 				}
 			};
@@ -582,11 +591,26 @@
 				item.textContent = label;
 				item.addEventListener('click', (e) => {
 					e.stopPropagation();
-					this._closeExportMenu();
+					// Hidden with focus inside, the keyboard would land on the page's body.
+					this._closeExportMenu(this.exportMenu.contains(document.activeElement));
 					this._runExport(format);
 				});
 				this.exportMenu.appendChild(item);
 			}
+			// What role="menu" promises a keyboard user: arrows move, Tab leaves. A held
+			// Enter on the button repeats onto the item it focused, and would export.
+			this.exportMenu.addEventListener('keydown', (e) => {
+				const items = [...this.exportMenu.children];
+				const at = items.indexOf(document.activeElement);
+				if (e.key === 'Enter' && e.repeat) e.preventDefault();
+				else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+					e.preventDefault();
+					items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus?.();
+				} else if (e.key === 'Tab') {
+					e.preventDefault();
+					this._closeExportMenu(true);
+				}
+			});
 			document.body.appendChild(this.exportMenu);
 
 			this.exportBtn.addEventListener('click', (e) => {
@@ -601,7 +625,7 @@
 				// Escape from the menu hands the keyboard back to the button that opened it.
 				const menuOpen = !this.exportMenu.classList.contains('cc-hidden');
 				this._closeFloaters();
-				if (menuOpen) this.exportBtn.focus?.();
+				if (menuOpen) this._closeExportMenu(true);
 			});
 		}
 
@@ -620,7 +644,7 @@
 			addRow('cc-popover__row--head', ['Context window', 'Free', 'Paid']);
 			for (const cells of CONTEXT_SIZES) addRow('', cells);
 			addRow('cc-popover__row--both', ['Older models', OLDER_MODELS_SIZE]);
-			pop.appendChild(line('cc-popover__note', 'Figures are for the newest version of each model; older ones are the same on Free and Paid. The count no longer applies after context compaction.'));
+			pop.appendChild(line('cc-popover__note', 'Figures are for the newest version of each model; older ones are the same on Free and Paid. After a context compaction, the count starts from Claude\u2019s summary.'));
 			document.body.appendChild(pop);
 			this.contextPopover = pop;
 
@@ -659,9 +683,11 @@
 			this.exportMenu.firstElementChild?.focus?.();
 		}
 
-		_closeExportMenu() {
+		/** `refocus`: hand the keyboard back to the button, as the menu had it. */
+		_closeExportMenu(refocus = false) {
 			this.exportMenu?.classList.add('cc-hidden');
 			this.exportBtn?.setAttribute('aria-expanded', 'false');
+			if (refocus) this.exportBtn?.focus?.();
 		}
 
 		/** Close whichever of our menus and popovers is open. */
@@ -677,7 +703,8 @@
 			this.exportBtn.classList.add('cc-exportBtn--busy');
 			try {
 				await this.onExport(format);
-			} catch {
+			} catch (e) {
+				CC.noteError('export', e);
 				// An explicit click that silently does nothing is worse than a wrong
 				// answer, so flash the button rather than failing invisibly.
 				this.exportBtn.classList.add('cc-exportBtn--error');
@@ -689,7 +716,7 @@
 		}
 
 		_setupTooltips() {
-			setupTooltip(this.lengthGroup, "Approximate tokens, excluding the system prompt. May differ from Claude's own count.", 'Click for details', (e) => this._toggleContext(e));
+			setupTooltip(this.lengthGroup, "Approximate, and lower than Claude's own count: thinking, images, the system prompt and tools are not included.", 'Click for details', (e) => this._toggleContext(e));
 			setupTooltip(this.cachedDisplay, 'Cached context timer. Messages sent while cached are significantly cheaper.');
 			setupTooltip(this.exportBtn, 'Export as Markdown or plain text. Active branch only.');
 			setupTooltip(this.refreshBtn, 'Refresh usage');
@@ -858,11 +885,8 @@
 			}
 			if (++this.unseen[key] < 3) return;
 			this.unseen[key] = 0;
-			if (key === 'usage') {
-				// Inline insets copied from the composer mean nothing out here.
-				el.style.paddingInline = '';
-				el.style.marginBottom = '';
-			}
+			// Inline insets copied from the composer mean nothing out here.
+			if (key === 'usage') this._landUsageLine();
 			document.body.appendChild(el);
 			el.classList.add('cc-floating');
 			this.floatRetryAt[key] = Date.now() + FLOAT_RETRY_MS;
@@ -910,9 +934,19 @@
 			// overlaps them or drops the row below the composer, against the viewport
 			// edge.
 			const input = document.querySelector(CC.DOM.CHAT_INPUT);
+			// Out of messages there is no composer, only Claude's notice in its place.
+			// The row goes under it, as a sibling: the notice is a single line of its own.
+			const panel = !input && document.querySelector(CC.DOM.LIMIT_PANEL);
+			if (panel) {
+				CC.uiVariant = 'limit';
+				if (panel.nextElementSibling !== this.usageLine) panel.after(this.usageLine);
+				this._landUsageLine();
+				return;
+			}
 			if (!input) return;
 			const matched = input.closest(CC.DOM.COMPOSER_CARD);
 			const card = matched || findComposerCard(input);
+			// Still beside the notice until the composer has a card to go back into.
 			if (!card) return;
 			// Which of the three tiers actually matched. This rides along in bug
 			// reports, and anchoring is the code most likely to break when claude.ai
@@ -929,8 +963,15 @@
 			if (card.lastElementChild !== this.usageLine) {
 				card.appendChild(this.usageLine);
 			}
-			this.usageLine.classList.remove('cc-floating');
+			this._landUsageLine();
 			this._alignToComposer(card);
+		}
+
+		/** Back in a real place: not floating, and no insets left from an earlier one. */
+		_landUsageLine() {
+			this.usageLine.classList.remove('cc-floating');
+			this.usageLine.style.paddingInline = '';
+			this.usageLine.style.marginBottom = '';
 		}
 
 		/**

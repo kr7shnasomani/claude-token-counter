@@ -4,6 +4,8 @@
 // elements simply never appeared. These suites pin the whole route, not just
 // attachHeader on its own.
 const { load, loadWith, fakeStorage, section, t, report } = require('./harness');
+// The title selector as shipped, so a reorder of it does not break these.
+const TITLE = load('src/content/constants.js').ClaudeCounter.DOM.CHAT_MENU_TRIGGER;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CONV = '00000000-0000-4000-8000-000000000000';
@@ -13,7 +15,7 @@ section('the observer reaches every tier attachHeader can use');
 // far as attachHeader's fallbacks. The observer now calls attachHeader itself, and
 // attachHeader looks at all three, so each layout must be reachable from a batch.
 for (const [label, anchor, tier] of [
-	['title testid', '[data-testid="chat-title-split"]', 'title'],
+	['title testid', TITLE, 'title'],
 	['chat-header testid', '[data-testid="chat-header"]', 'header-testid'],
 	['semantic <header> only', 'header', 'semantic-header']
 ]) {
@@ -45,7 +47,7 @@ section('attachHeader reports which tier it used');
 	let { ui, doc } = mk();
 	const title = el(doc);
 	title.after = (n) => { title.sibling = n; };
-	doc.querySelector = (s) => (s === '[data-testid="chat-title-split"]' ? title : null);
+	doc.querySelector = (s) => (s === TITLE ? title : null);
 	ui.attachHeader();
 	t('title testid', ui.headerTier === 'title' && title.sibling === ui.headerContainer);
 
@@ -80,7 +82,7 @@ section('the counter moves up to the title once it renders');
 	title.after = (n) => { title.sibling = n; };
 	let titleThere = false;
 	c.document.querySelector = (sel) => {
-		if (sel === '[data-testid="chat-title-split"]') return titleThere ? title : null;
+		if (sel === TITLE) return titleThere ? title : null;
 		if (sel === 'header') return header;
 		return null;
 	};
@@ -146,8 +148,6 @@ section('content script: a layout with only a semantic <header> still gets the c
 
 section('content script: an org id that arrives late still fetches the conversation');
 {
-	// No chrome.runtime here, as in live-refresh: with one, the shim never fires
-	// the bridge script's onload and every fetch waits on it forever.
 	const c = load('src/content/constants.js', 'src/content/tokens.js', 'src/content/ui.js',
 		'src/content/bridge-client.js', 'src/content/main.js');
 	const CC = c.ClaudeCounter;

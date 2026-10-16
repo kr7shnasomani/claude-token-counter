@@ -108,13 +108,23 @@
 		return parts.join('\n');
 	}
 
-	function computeConversationMetrics(conversation) {
-		const trunk = buildTrunk(conversation);
+	// After a compaction the model sees the summary and what follows, not the turns
+	// it replaced. claude.ai marks it with `compaction_summary` (text blocks) on the
+	// message where it happened (seen 2026-10-15).
+	function sinceLastCompaction(trunk) {
+		const at = trunk.findLastIndex((m) => Array.isArray(m?.compaction_summary));
+		if (at < 0) return { messages: trunk, summary: '' };
+		const summary = trunk[at].compaction_summary.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('\n');
+		return { messages: trunk.slice(at), summary };
+	}
 
-		let totalTokens = 0;
+	function computeConversationMetrics(conversation) {
+		const { messages, summary } = sinceLastCompaction(buildTrunk(conversation));
+
+		let totalTokens = countTokens(summary);
 		let lastAssistantMs = null;
 
-		for (const msg of trunk) {
+		for (const msg of messages) {
 			if (msg?.sender === 'assistant' && msg?.created_at) {
 				const msgMs = Date.parse(msg.created_at);
 				if (!lastAssistantMs || msgMs > lastAssistantMs) {

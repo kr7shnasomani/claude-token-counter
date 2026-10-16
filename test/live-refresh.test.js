@@ -33,7 +33,7 @@ function loadBridge(fakeFetch) {
 	const posted = [];
 	const window = {
 		fetch: fakeFetch,
-		location: { origin: 'https://claude.ai' },
+		location: { origin: 'https://claude.ai', href: 'https://claude.ai/chat/x' },
 		postMessage: (msg) => posted.push(msg),
 		addEventListener() {},
 		dispatchEvent() {}
@@ -42,7 +42,7 @@ function loadBridge(fakeFetch) {
 		window, posted,
 		history: { pushState() {}, replaceState() {} },
 		CustomEvent: class { constructor(type) { this.type = type; } },
-		Request, Response, ReadableStream, TextDecoder, TextEncoder, URL, crypto, console
+		Request, Response, ReadableStream, TextDecoder, TextEncoder, URL, crypto, console, Blob, DecompressionStream, CompressionStream
 	});
 	vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/injected/bridge.js'), 'utf8'), ctx);
 	const types = () => posted.map((m) => m.type);
@@ -91,6 +91,151 @@ async function waitFor(cond, ms = 500) {
 		t('  and the error still reaches claude.ai', threw);
 	}
 
+	section('bridge: a send refused at the limit still reports usage');
+	{
+		const limit = { windows: { '5h': { status: 'exceeded_limit', resets_at: 1787417400, utilization: 0.98 } } };
+		const b = loadBridge(async () => new Response(JSON.stringify({ error: { message: JSON.stringify(limit) } }), { status: 429, headers: { 'content-type': 'application/json' } }));
+		await b.fetch(COMPLETION_URL, { method: 'POST' });
+		t('message_limit posted from the refusal', await waitFor(() => b.types().includes('cc:message_limit')));
+		t('  with its windows', b.posted.find((m) => m.type === 'cc:message_limit')?.payload?.windows?.['5h']?.utilization === 0.98);
+	}
+
+	section('bridge: the newer layout\'s timeline stream carries usage too');
+	{
+		// A protobuf writer just big enough for the message_limit path, so the test
+		// builds real wire bytes rather than trusting the decoder's own idea of them.
+		const varint = (n) => { const o = []; while (n >= 0x80) { o.push((n % 128) | 0x80); n = Math.floor(n / 128); } o.push(n); return o; };
+		const bytes = (field, b) => [...varint(field * 8 + 2), ...varint(b.length), ...b];
+		const num = (field, n) => [...varint(field * 8), ...varint(n)];
+		const dbl = (field, x) => { const d = new DataView(new ArrayBuffer(8)); d.setFloat64(0, x, true); return [...varint(field * 8 + 1), ...new Uint8Array(d.buffer)]; };
+		const win = (key, status, secs, util) => bytes(13, [...bytes(1, [...new TextEncoder().encode(key)]), ...bytes(2, [...num(1, status), ...bytes(2, num(1, secs)), ...dbl(3, util)])]);
+		const limitMsg = bytes(1, bytes(4, [...num(1, 1), ...win('5h', 3, 1787417400, 0.98), ...win('7d', 1, 1787860800, 0.04)]));
+		const otherMsg = bytes(1, bytes(6, [])); // a heartbeat
+		const frame = (flags, payload) => [flags, ...[24, 16, 8, 0].map((s) => (payload.length >>> s) & 255), ...payload];
+		const all = new Uint8Array([...frame(0, otherMsg), ...frame(0, limitMsg), ...frame(2, [...new TextEncoder().encode('{}')])]);
+		// Split mid-frame, as a network read would.
+		const body = new ReadableStream({ start(c) { c.enqueue(all.slice(0, 9)); c.enqueue(all.slice(9)); c.close(); } });
+		const url = 'https://claude.ai/claudeai-rpc/anthropic.bard.api.v1alpha.ConversationService/StreamTimeline';
+		// A bridge whose fetch answers with a timeline stream carrying these bytes.
+		const timelineOf = (data) => loadBridge(async () => new Response(
+			data instanceof ReadableStream ? data : new ReadableStream({ start(c) { c.enqueue(data); c.close(); } }),
+			{ headers: { 'content-type': 'application/connect+proto' } }));
+		const b = timelineOf(body);
+		const res = await b.fetch(url, { method: 'POST' });
+		t('the page still gets its whole stream', (await res.arrayBuffer()).byteLength === all.length);
+		t('message_limit posted from the timeline', await waitFor(() => b.types().includes('cc:message_limit')));
+		const w = b.posted.find((m) => m.type === 'cc:message_limit')?.payload?.windows;
+		t('  5h decoded, marked spent', w?.['5h']?.utilization === 0.98 && w['5h'].resets_at === 1787417400 && w['5h'].status === 'exceeded_limit', JSON.stringify(w));
+		t('  7d decoded', w?.['7d']?.utilization === 0.04 && w['7d'].status === 'within_limit');
+		t('  once, for the one limit event', b.types().filter((x) => x === 'cc:message_limit').length === 1);
+		t('not mistaken for a completion', !b.types().includes('cc:generation_start'));
+
+		// The same stream says when a reply starts and ends: the conversation's status.
+		const enc = (x) => [...new TextEncoder().encode(x)];
+		const statusOf = (id, n) => bytes(1, bytes(1, bytes(2, [...bytes(1, enc(id)), ...num(3, n)])));
+		const status = (n) => statusOf(CONV, n);
+		const turn = new Uint8Array([
+			...frame(0, status(1)), // idle on connect: no reply
+			...frame(0, status(2)), // running
+			...frame(0, status(2)), // still running: no second start
+			...frame(0, limitMsg),
+			...frame(0, status(1)) // idle: the reply is done
+		]);
+		const t2 = timelineOf(turn);
+		await (await t2.fetch(url, { method: 'POST' })).arrayBuffer();
+		await waitFor(() => t2.types().includes('cc:generation_end'));
+		t('a reply on the timeline starts once and ends once',
+			t2.types().filter((x) => x === 'cc:generation_start').length === 1 && t2.types().filter((x) => x === 'cc:generation_end').length === 1, t2.types().join());
+		t('  in order, with the usage between', t2.types().join() === 'cc:generation_start,cc:message_limit,cc:generation_end', t2.types().join());
+		t('  naming the conversation', t2.posted.find((m) => m.type === 'cc:generation_end')?.payload?.conversationId === CONV);
+
+		const cut = timelineOf(new Uint8Array(frame(0, status(2))));
+		await (await cut.fetch(url, { method: 'POST' })).arrayBuffer();
+		t('a stream cut mid-reply still ends the wait', await waitFor(() => cut.types().includes('cc:generation_end')));
+
+		// Hostile input: junk messages, a gzipped one, a huge one, all in tiny chunks.
+		// A message that does not decode is skipped; the ones after it still count.
+		let seed = 7;
+		const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+		const junk = () => Array.from({ length: 1 + Math.floor(rnd() * 200) }, () => Math.floor(rnd() * 256));
+		const gz = async (raw) => [...new Uint8Array(await new Response(new Blob([new Uint8Array(raw)]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer())];
+		// A long chat's first snapshot: one 3 MB message (an update whose messages
+		// field is filler). Built as bytes, too big to spread into an array.
+		const MB3 = 3 * 1024 * 1024;
+		const inner = [0x1a, ...varint(MB3)]; // update.messages (field 3), length-delimited
+		const mid = [0x0a, ...varint(inner.length + MB3)]; // event.update (field 1)
+		const outer = [0x0a, ...varint(mid.length + inner.length + MB3)]; // response.event (field 1)
+		const bigLen = outer.length + mid.length + inner.length + MB3;
+		const bigFrame = new Uint8Array(5 + bigLen);
+		bigFrame.set([0, (bigLen >>> 24) & 255, (bigLen >>> 16) & 255, (bigLen >>> 8) & 255, bigLen & 255, ...outer, ...mid, ...inner]);
+		const chunks = [];
+		for (let i = 0; i < 40; i++) chunks.push(new Uint8Array(frame(0, junk())));
+		chunks.push(bigFrame, new Uint8Array(frame(0, status(2))), new Uint8Array(frame(1, await gz(limitMsg))));
+		for (let i = 0; i < 40; i++) chunks.push(new Uint8Array(frame(0, junk())));
+		chunks.push(new Uint8Array(frame(0, status(4))));
+		const hostile = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+		chunks.reduce((at, c) => (hostile.set(c, at), at + c.length), 0);
+		const started = Date.now();
+		const h = timelineOf(new ReadableStream({
+			start(c) { for (let i = 0; i < hostile.length; i += 4096) c.enqueue(hostile.slice(i, i + 4096)); c.close(); }
+		}));
+		const got = await (await h.fetch(url, { method: 'POST' })).arrayBuffer();
+		await waitFor(() => h.types().includes('cc:generation_end'), 3000);
+		t('junk is skipped, not fatal: usage and the reply\'s end still arrive',
+			h.types().join() === 'cc:generation_start,cc:message_limit,cc:generation_end', h.types().join());
+		t('  the gzipped message decoded', h.posted.find((m) => m.type === 'cc:message_limit')?.payload?.windows?.['7d']?.utilization === 0.04);
+		t('  the page still got every byte', got.byteLength === hostile.length);
+		t('  a 3 MB message in 4 KB chunks reads in well under a second', Date.now() - started < 1000, (Date.now() - started) + ' ms');
+
+		const desync = timelineOf(new Uint8Array([0, 255, 255, 255, 255, 1, 2, 3]));
+		await (await desync.fetch(url, { method: 'POST' })).arrayBuffer();
+		await sleep(50);
+		t('a length no real message has stops reading instead of buffering forever', desync.types().length === 0);
+
+		const OTHER = '11111111-1111-4111-8111-111111111111';
+		const two = new Uint8Array([...frame(0, statusOf(CONV, 2)), ...frame(0, statusOf(OTHER, 1)), ...frame(0, statusOf(CONV, 1))]);
+		const tw = timelineOf(two);
+		await (await tw.fetch(url, { method: 'POST' })).arrayBuffer();
+		await waitFor(() => tw.types().includes('cc:generation_end'));
+		const ends = tw.posted.filter((m) => m.type === 'cc:generation_end').map((m) => m.payload.conversationId);
+		t('another chat going idle does not end this one\'s reply', ends.length === 1 && ends[0] === CONV, ends.join());
+
+		const noId = (n) => bytes(1, bytes(1, bytes(2, num(3, n))));
+		const anon = new Uint8Array([...frame(0, statusOf(CONV, 2)), ...frame(0, noId(1))]);
+		const an = timelineOf(anon);
+		await (await an.fetch(url, { method: 'POST' })).arrayBuffer();
+		await waitFor(() => an.types().includes('cc:generation_end'));
+		t('an idle update that names no chat still ends the running reply, once',
+			an.posted.filter((m) => m.type === 'cc:generation_end').length === 1 && an.posted.find((m) => m.type === 'cc:generation_end').payload.conversationId === CONV);
+
+		const midDesync = new Uint8Array([...frame(0, statusOf(CONV, 2)), 0, 255, 255, 255, 255]);
+		const md = timelineOf(midDesync);
+		await (await md.fetch(url, { method: 'POST' })).arrayBuffer();
+		t('framing lost mid-reply still ends that reply', await waitFor(() => md.posted.some((m) => m.type === 'cc:generation_end' && m.payload.conversationId === CONV)));
+
+		const err = loadBridge(async () => new Response('<!DOCTYPE html>', { status: 401, headers: { 'content-type': 'application/connect+proto' } }));
+		await (await err.fetch(url, { method: 'POST' })).text();
+		await sleep(30);
+		t('an error response is not read as a stream', err.types().length === 0);
+	}
+
+	section('bridge: requests are recognised however they are written');
+	{
+		const b = loadBridge(async () => new Response('{}', { headers: { 'content-type': 'application/json' } }));
+		await b.fetch('//claude.ai/api/organizations/' + ORG + '/usage');
+		t('a protocol-relative URL still teaches the org id', b.posted.some((m) => m.type === 'cc:org' && m.payload.orgId === ORG));
+		const c = loadBridge(async () => new Response('{}', { headers: { 'content-type': 'application/json' } }));
+		await c.fetch('https://tracker.example/api/organizations/' + ORG + '/x');
+		t('another site\'s URL does not', !c.types().includes('cc:org'));
+		const d = loadBridge(async () => new Response('{}', { headers: { 'content-type': 'application/json' } }));
+		await d.fetch(new URL('https://claude.ai/api/organizations/' + ORG + '/chat_conversations/' + CONV + '/completion'), { method: 'POST' });
+		t('a URL object is recognised as a completion', d.types().includes('cc:generation_start'));
+		const e = loadBridge(async () => new Response('{}', { headers: { 'content-type': 'application/json' } }));
+		let res;
+		try { res = await e.fetch({ toString() { throw new Error('odd input'); } }); } catch { res = 'threw'; }
+		t('input that trips our checks still reaches the real fetch', res && res !== 'threw');
+	}
+
 	section('bridge: an HTTP error is a failure, not data');
 	{
 		// A 429 or 401 answers with JSON. Passed on as data it became an empty export,
@@ -111,6 +256,26 @@ async function waitFor(cond, ms = 500) {
 			const res = posted.find((m) => m.type === 'cc:response');
 			t(kind + ': refused, with the status', res?.ok === false && res.payload === null && /429/.test(res.error), JSON.stringify(res));
 		}
+	}
+
+	section('bridge: what it saw before the content script listened is said again');
+	{
+		// The bridge runs at document_start, the content script at idle: the page's
+		// first org-scoped call is long over by then, and was posted to nobody.
+		const listeners = [];
+		const posted = [];
+		const window = {
+			fetch: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
+			location: { origin: 'https://claude.ai' }, postMessage: (m) => posted.push(m),
+			addEventListener: (_type, fn) => listeners.push(fn), dispatchEvent() {}
+		};
+		vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/injected/bridge.js'), 'utf8'), vm.createContext({
+			window, history: { pushState() {}, replaceState() {} }, CustomEvent: class {}, Request, Response, TextDecoder, URL, console
+		}));
+		await window.fetch('https://claude.ai/api/organizations/' + ORG + '/usage');
+		posted.length = 0;
+		for (const fn of listeners) await fn({ source: window, data: { cc: 'ClaudeCounter', type: 'cc:hello' } });
+		t('the org id is posted again on hello', posted.some((m) => m.type === 'cc:org' && m.payload?.orgId === ORG));
 	}
 
 	section('bridge: completion detection');

@@ -8,7 +8,7 @@ const browser = {
 	console: 'readonly', fetch: 'readonly', Request: 'readonly', Response: 'readonly',
 	Blob: 'readonly', URL: 'readonly', Headers: 'readonly', FormData: 'readonly',
 	setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
-	MutationObserver: 'readonly', TextEncoder: 'readonly', TextDecoder: 'readonly',
+	MutationObserver: 'readonly', TextEncoder: 'readonly', TextDecoder: 'readonly', DecompressionStream: 'readonly', CompressionStream: 'readonly',
 	crypto: 'readonly', history: 'readonly', Intl: 'readonly', getComputedStyle: 'readonly',
 	globalThis: 'readonly', chrome: 'readonly', browser: 'readonly', HTMLElement: 'readonly',
 	Element: 'readonly', Node: 'readonly', CustomEvent: 'readonly', Event: 'readonly'

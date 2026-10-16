@@ -95,6 +95,7 @@ const sseReading = () => ({ windows: { '5h': { utilization: 0.4, resets_at: Math
 		t('with its percentage', /^92%/.test(value(rows[0])));
 		t('filled to it, and red past 90%', fill(rows[0]).style.width === '92%' && fill(rows[0]).classList.contains('warn'));
 		t('the ordinary bars are unaffected', /^26%/.test(els.sessionValue.textContent) && /^48%/.test(els.weeklyValue.textContent));
+		t('resets read in hours and minutes, days and hours', /resets 1h$/.test(els.sessionValue.textContent) && /resets 1d$/.test(els.weeklyValue.textContent) && /resets 5d$/.test(value(rows[0])), els.sessionValue.textContent);
 	}
 
 	{

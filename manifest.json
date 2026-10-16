@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Claude Token Counter",
-  "version": "1.0.12",
+  "version": "1.0.13",
+  "minimum_chrome_version": "111",
   "browser_specific_settings": {
     "gecko": {
       "id": "{1ee7e9bc-8d77-4598-a99b-917e2ca6e0ae}",
@@ -44,12 +45,12 @@
         "src/content/ui.js",
         "src/content/main.js"
       ]
-    }
-  ],
-  "web_accessible_resources": [
+    },
     {
-      "resources": ["src/injected/bridge.js"],
-      "matches": ["https://claude.ai/*"]
+      "matches": ["https://claude.ai/*"],
+      "js": ["src/injected/bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ]
 }

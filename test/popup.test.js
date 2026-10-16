@@ -2,7 +2,8 @@
 // the three panels, their controls, and the issue URL the feedback form builds.
 const fs = require('fs');
 const path = require('path');
-const { section, t, report } = require('./harness');
+const vm = require('vm');
+const { loadWith, fakeStorage, section, t, report } = require('./harness');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -56,7 +57,7 @@ t('UI variant names the tier that matched', ["'shape'", "'cds'", "'class'"].ever
 t('and carried in the snapshot', read('src/content/main.js').includes('uiVariant: CC.uiVariant'));
 // Diagnostics have their own key: the snapshot only exists once a plan reports
 // usage, and free accounts with a broken layout never do.
-for (const line of ['Claude build:', 'Layout:', 'Shown:']) t('report carries ' + line, js.includes(line));
+for (const line of ['Claude build:', 'Layout:', 'Shown:', 'Usage from:']) t('report carries ' + line, js.includes(line));
 t('read from its own key, not the usage snapshot', js.includes('CC.DIAG_KEY') && read('src/content/constants.js').includes("DIAG_KEY = 'cc:diag'"));
 
 section('refresh does not fake freshness');
@@ -134,4 +135,34 @@ const manifest = JSON.parse(read('manifest.json'));
 t('permissions unchanged', JSON.stringify(manifest.permissions) === '["storage"]');
 t('github not in host permissions', JSON.stringify(manifest.optional_host_permissions) === '["https://claude.ai/*"]');
 
-process.exit(report('popup'));
+// The real popup, clicked: a long report full of emoji has to be cut to fit the
+// link, and a cut through the middle of one made encodeURIComponent throw, so the
+// button silently did nothing.
+(async () => {
+	section('a long report with emoji still opens an issue');
+	const store = fakeStorage({ 'cc:diag': { build: 'b', composer: 'cds', usageFrom: 'timeline' } });
+	const els = {};
+	const opened = [];
+	const ctx = loadWith({
+		chrome: { storage: store.storage, runtime: { getManifest: () => ({ version: 'x' }) } },
+		setup: (x) => {
+			x.document.getElementById = (id) => (els[id] = els[id] || Object.assign(x.document.createElement('div'), { value: '' }));
+			x.document.querySelectorAll = () => [];
+			x.document.querySelector = () => x.document.createElement('div');
+			els.eyebrow = x.document.createElement('p');
+			els.eyebrow.appendChild(x.document.createTextNode('Usage limits'));
+			x.window.open = (url) => opened.push(url);
+			x.navigator = { userAgent: 'Chrome/150', userAgentData: null };
+		}
+	}, 'src/content/constants.js');
+	vm.runInContext(js, ctx);
+	await new Promise((r) => setTimeout(r, 30));
+	els.feedbackText.value = 'x'.repeat(69) + '\u{1F600} broken\n' + '\u{1F600}\u4E2D'.repeat(3000);
+	els.feedbackSend.fire('click');
+	await new Promise((r) => setTimeout(r, 30));
+	t('an issue opens', opened.length === 1);
+	t('  within the link limit', opened[0]?.length <= 7000, String(opened[0]?.length));
+	let decoded;
+	try { decoded = decodeURIComponent(opened[0].split('body=')[1]); } catch { decoded = ''; }
+	t('  carrying where usage came from', decoded.includes('Usage from: timeline'));
+})().then(() => process.exit(report('popup')));

@@ -14,8 +14,6 @@ const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 /** Boot the whole content script against a stubbed bridge; `orgs` answers requestOrgs. */
 async function boot(orgs, { cookie = true } = {}) {
 	const store = fakeStorage();
-	// No chrome.runtime: with one, the shim never fires the bridge script's onload
-	// and every request waits on it forever.
 	const chrome = { storage: store.storage };
 	const intervals = [];
 	const ctx = loadWith({ chrome, setInterval: (fn) => { intervals.push(fn); return 0; } },
