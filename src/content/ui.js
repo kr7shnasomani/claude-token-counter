@@ -717,7 +717,7 @@
 
 		_setupTooltips() {
 			setupTooltip(this.lengthGroup, "Approximate, and lower than Claude's own count: thinking, images, the system prompt and tools are not included.", 'Click for details', (e) => this._toggleContext(e));
-			setupTooltip(this.cachedDisplay, 'Cached context timer. Messages sent while cached are significantly cheaper.');
+			setupTooltip(this.cachedDisplay, 'Cached context timer: an estimate, five minutes from the last reply. Continuing while it runs can use less of your limit.');
 			setupTooltip(this.exportBtn, 'Export as Markdown or plain text. Active branch only.');
 			setupTooltip(this.refreshBtn, 'Refresh usage');
 			setupTooltip(this.sessionGroup, "5-hour session window. The thin line shows how far through it you are.");

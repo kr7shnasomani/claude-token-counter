@@ -1,6 +1,6 @@
 # Privacy Policy for Claude Token Counter
 
-**Last updated:** October 15, 2026
+**Last updated:** October 17, 2026
 
 ## Overview
 
@@ -9,7 +9,7 @@ Claude Token Counter is a browser extension that operates entirely within your b
 ## Data Accessed
 
 ### Cookies
-The extension reads the `lastActiveOrg` cookie from `claude.ai` solely to identify your active Claude organization. This is used to query Claude's own API on your behalf for usage data. The cookie value is never stored, logged, or transmitted outside of `claude.ai`.
+The extension reads the `lastActiveOrg` cookie from `claude.ai` solely to identify your active Claude organization. This is used to query Claude's own API on your behalf for usage data. The organisation id it holds is kept in the usage snapshot described below, and is never logged or transmitted outside of `claude.ai`.
 
 ### Network Requests
 The extension makes requests exclusively to the following Claude API endpoints:

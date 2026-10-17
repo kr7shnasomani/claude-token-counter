@@ -6,3 +6,4 @@ dist/
 eslint-results.sarif
 claude-token-counter-*.zip
 claude-token-counter-*.js
+*.mp4

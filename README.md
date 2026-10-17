@@ -15,18 +15,30 @@
   </a>
 </p>
 
-![Claude Token Counter Dark Mode](img/darkmodess.jpg)
+https://github.com/user-attachments/assets/6e5276ac-5881-43a4-92d1-d4ca439bb60e
 
 ## Features
 
 - **Token count**: approximate token count for the current conversation, shown in a quiet chip beside the chat title
-- **Cache timer**: countdown in the same chip showing how long the conversation remains cached (cheaper to continue). A green dot marks a live cache; it appears only while the context is actually cached and disappears when the window closes
-- **Usage bars**: session (5 hour) and weekly (7 day) usage from Claude's native API, with reset countdowns and more precision than the rounded `/usage` page. Bars turn amber past 75% and red past 90%. A thin line marks how far through the window you are, so you can see whether you are burning quota faster than the clock
+- **Cache timer**: countdown in the same chip, an estimate of how long Claude keeps the conversation's context cached: five minutes from the last reply, the length of Anthropic's standard prompt cache (Anthropic does not publish how claude.ai itself caches). A green dot marks a running countdown, the dot is muted while a reply is awaited, and the timer disappears when the window closes
+- **Usage bars**: session (5 hour) and weekly (7 day) usage from Claude's own data, with reset countdowns. Bars turn amber past 75% and red past 90%. A thin line marks how far through the window you are, so you can see whether you are burning quota faster than the clock
 - **Hover help**: every control explains itself in a tooltip drawn to match Claude's own, and the token counter opens a small popover with each model's context-window size
-- **Chat export**: download the current conversation as Markdown or plain text, including any files Claude generated
+- **Chat export**: download the current conversation as Markdown or plain text, including the text files Claude generated (binary ones are listed by name)
 - **Toolbar popup**: click the extension icon from any tab for your plan's session and weekly limits, with settings for what appears on the page and a one-click bug report
 
 The extension requests a single permission, `storage`. It runs on claude.ai and nowhere else, so that is the only site the browser lists it as able to access. The popup asks for its own access to claude.ai only if you press refresh there.
+
+## Screenshots
+
+| Dark | Light |
+| --- | --- |
+| ![Claude Token Counter on claude.ai in dark mode](img/darkmodess.jpg) | ![Claude Token Counter on claude.ai in light mode](img/lightmodess.jpg) |
+
+The toolbar popup: your limits from any tab, a switch for each part, and a prefilled bug report.
+
+| Usage limits | Settings | Send feedback |
+| --- | --- | --- |
+| ![Popup showing the hourly and weekly limits](img/popup-usage.jpeg) | ![Popup settings with a switch for each part](img/popup-settings.jpeg) | ![Popup feedback form](img/popup-report.jpeg) |
 
 ## Installation
 
@@ -36,7 +48,7 @@ The extension requests a single permission, `storage`. It runs on claude.ai and 
 
 **Firefox** (requires Firefox 128 or later)
 1. Install directly from [Firefox Browser Add-ons](https://addons.mozilla.org/en-US/firefox/addon/claude-token-counter).
-2. Or download the latest `claude-token-counter-firefox-*.zip` from the [Releases](../../releases) page and drag it into any Firefox window, then click **Add**.
+2. Or, for testing, download the latest `claude-token-counter-firefox-*.zip` from the [Releases](../../releases) page, open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on** and pick the zip. Firefox installs only signed add-ons permanently, and this zip is unsigned, so it is removed when Firefox restarts; use the Add-ons listing above to keep it.
 
 ## How it works
 
@@ -48,7 +60,7 @@ This script runs in the page's own execution context (the "main world"), not the
 
 - `window.fetch`: every request claude.ai makes passes through here first. The bridge inspects the URL and response of each call:
   - POST requests to `/completion` or `/retry_completion` mark the start of a generation, which is used to show a "pending cache" state in the UI.
-  - Responses with an `event-stream` content type are read via a `ReadableStream` reader, line by line, watching for a `data: {"type":"message_limit", ...}` payload. This is the same server-sent event stream Claude's own UI uses to update usage in real time, so the extension reads the exact same unrounded utilization numbers.
+  - Responses with an `event-stream` content type are read via a `ReadableStream` reader, line by line, watching for a `data: {"type":"message_limit", ...}` payload. This is the same server-sent event stream Claude's own UI uses to update usage in real time, so the bars move as soon as a reply lands.
   - On the newer claude.ai layout there is no `/completion` stream: messages are sent with a Connect RPC (`PerformAction`) and everything comes back on a long-lived `StreamTimeline` stream in binary protobuf. The bridge reads a copy of that stream with a small decoder for exactly two things, the conversation's status (whose change from busy to idle is the end of a reply) and the same `message_limit` usage figures.
   - A send that claude.ai refuses for hitting the limit still reports usage in its error body, and that is read too.
   - Responses to `/chat_conversations/{id}?tree=...` are cloned and parsed as JSON, giving the extension the full message tree for the active conversation.
@@ -72,8 +84,8 @@ Runs in the isolated content script world, declared in `manifest.json` against `
 
 Usage numbers come from two sources that the extension reconciles:
 
-- A REST call to `/api/organizations/{orgId}/usage`, fetched on demand through the bridge, which returns rounded `five_hour` and `seven_day` utilization percentages plus their reset timestamps.
-- The live `message_limit` event described above, from the SSE stream on the older layout or the timeline stream on the newer one, which carries the same data as unrounded fractions, so it's more precise than what claude.ai's own `/usage` page displays.
+- A REST call to `/api/organizations/{orgId}/usage`, fetched on demand through the bridge, which returns `five_hour` and `seven_day` utilization percentages plus their reset timestamps.
+- The live `message_limit` event described above, from the SSE stream on the older layout or the timeline stream on the newer one, which carries the same figures as fractions (0.42 for 42%) and arrives with every reply, so the bars update without a page reload. Both sources report whole percentages (seen 2026-10-16), so the figures match claude.ai's own usage page.
 
 The end of a reply is known from the stream (the SSE stream closing, or the timeline's conversation status going idle), and `main.js` also watches the page's own `data-is-streaming` flag as a second signal, so the count still moves if one of them changes. If a part of the extension cannot be painted for a few seconds because claude.ai's layout has no place for it, it floats over the page as a small pill instead of disappearing, and tries its real spot again every half minute.
 
@@ -126,11 +138,9 @@ painted. `test/fixtures/composer.html` covers that by hand: serve the repo
 all three composer variants and to a mock Claude header. It is not part of `npm test`; there is no browser
 in CI.
 
-The version appears in `manifest.json` and `package.json`. CI and the release workflow both refuse to proceed if they disagree.
-
 ## Releasing
 
-Bump `version` in `manifest.json`, `package.json` and `package-lock.json` (the tests fail if they disagree) and push to `main`. If no `v<version>` tag exists yet, the workflow runs the tests and lint, creates the tag and release, builds the Chrome and Firefox artifacts, verifies nothing unwanted was packaged, and publishes them with a `SHA256SUMS.txt`. Releases are cut from `main` only, and pushing a tag by hand no longer does anything (a manual run from the Actions tab retries a failed release). Every action is pinned to a commit SHA. See [SECURITY.md](SECURITY.md) for the dependency policy.
+Bump `version` in `manifest.json`, `package.json` and `package-lock.json` (the tests fail if they disagree) and push to `main`. If no `v<version>` tag exists yet, the workflow runs the tests and lint, creates the tag and release, builds the Chrome and Firefox artifacts, verifies nothing unwanted was packaged, and publishes them with a `SHA256SUMS.txt`. When the Chrome Web Store credentials are set as repository secrets it also uploads the Chrome zip to the store as a draft, which still needs **Submit for review** in the developer dashboard; without them that step is skipped and the zip is uploaded by hand. Releases are cut from `main` only, and pushing a tag by hand no longer does anything (a manual run from the Actions tab retries a failed release). Every action is pinned to a commit SHA. See [SECURITY.md](SECURITY.md) for the dependency policy.
 
 ## Credits
 

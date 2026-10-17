@@ -104,7 +104,7 @@ const touch = { pointerType: 'touch' };
 		t('every tooltip fits Claude\'s 240px box in a few lines (under 130 characters)', Object.values(texts).every((x) => x.length < 130), JSON.stringify(texts));
 		t('token count says approximate and excludes the system prompt', /Approximate/.test(texts.tokens) && /system prompt/.test(texts.tokens));
 		t('token count points to the popover', /Click for details/.test(texts.tokens));
-		t('cache timer says why it matters', /cheaper/.test(texts.cache));
+		t('cache timer says why it matters', /less of your limit/.test(texts.cache) && /estimate/.test(texts.cache));
 		t('hourly names its window', /5-hour/.test(texts.hourly));
 		t('weekly names its window', /7-day/.test(texts.weekly));
 		t('both bars explain the thin line', /thin line/.test(texts.hourly) && /thin line/.test(texts.weekly));

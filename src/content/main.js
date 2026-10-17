@@ -206,7 +206,7 @@
 		const plan = await resolvePlanLabel();
 		try {
 			await storage.set({
-				'cc:usageSnapshot': {
+				[CC.SNAPSHOT_KEY]: {
 					updatedAt: Date.now(),
 					orgId: resolveOrgId(),
 					plan,

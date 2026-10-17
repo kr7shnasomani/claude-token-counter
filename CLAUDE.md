@@ -162,7 +162,11 @@ header shows `18 tokens | ● 2:16` in a quiet pill beside Claude's title; the
 words "Token Counter:" and "Cached Context Timer:" stay in the DOM as
 screen-reader text (`.cc-sr`) and the tooltips explain them, so `textContent`
 (and the tests that read it) still carries them. The dot is the cached signal:
-green while a countdown runs, muted while a reply is awaited. The separator is a
+green while a countdown runs, muted while a reply is awaited. The five minutes is
+Anthropic's standard prompt-cache lifetime, not anything claude.ai publishes about
+itself, and its help centre documents a cheaper-on-the-limit effect only for
+project content (checked 2026-10-17), so the tooltip says "estimate" and "can use
+less", never "significantly cheaper". The separator is a
 drawn element, not a `|` character. A floating pill drops the chip's own
 background. `composer.html` has a mock Claude header to judge it against.
 
